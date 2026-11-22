@@ -44,12 +44,12 @@ ADMIN_ONLY = "IsOwnerOrAdmin"
 
 
 def view_files(root=APPS_DIR):
-    """Every views module, recursively: views.py, modifier_views.py, till_views.py ..."""
+    """Every views module, recursively (views.py, modifier_views.py, ...)."""
     return sorted(glob.glob(os.path.join(root, "**", "*views*.py"), recursive=True))
 
 
 def _names(node):
-    """All identifiers (Name ids, and requires_module call heads) inside an expression."""
+    """All identifiers (Name ids and requires_module heads) in an expression."""
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
@@ -67,10 +67,17 @@ def _is_ok(node):
 def _class_permission_expr(cls):
     for node in cls.body:
         if isinstance(node, ast.Assign):
-            if any(isinstance(t, ast.Name) and t.id == "permission_classes" for t in node.targets):
+            if any(
+                isinstance(t, ast.Name) and t.id == "permission_classes"
+                for t in node.targets
+            ):
                 return node.value
         elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name) and node.target.id == "permission_classes" and node.value:
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == "permission_classes"
+                and node.value
+            ):
                 return node.value
     return None
 
@@ -99,7 +106,9 @@ def _has_tick(cls, by_name, own, seen=None):
     if cls.name in own:
         return own[cls.name]
     for base in cls.bases:
-        base_name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", None)
+        base_name = (
+            base.id if isinstance(base, ast.Name) else getattr(base, "attr", None)
+        )
         base_cls = by_name.get(base_name)
         if base_cls is not None and _has_tick(base_cls, by_name, own, seen):
             return True
@@ -111,7 +120,9 @@ def _returns(fn):
     out, stack = [], list(fn.body)
     while stack:
         node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
             continue
         if isinstance(node, ast.Return):
             out.append(node)
@@ -149,13 +160,24 @@ def scan_source(src, path="<memory>", extra_classes=None):
     for cls in classes:
         if not _has_tick(cls, by_name, own):
             continue
-        for fn in (n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
+        for fn in (
+            n
+            for n in cls.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
             if fn.name == "get_permissions":
                 for ret in _returns(fn):
                     if ret.value is None or _is_super_get_permissions(ret.value):
                         continue
                     if not _is_ok(ret.value):
-                        offenders.append((path, cls.name, f"get_permissions@L{ret.lineno}", ret.lineno))
+                        offenders.append(
+                            (
+                                path,
+                                cls.name,
+                                f"get_permissions@L{ret.lineno}",
+                                ret.lineno,
+                            )
+                        )
                 continue
             for dec in fn.decorator_list:
                 if not isinstance(dec, ast.Call):
@@ -178,7 +200,9 @@ def scan_tree(root=APPS_DIR):
         all_classes.extend(_collect_classes(ast.parse(src)))
     offenders = []
     for path, src in parsed.items():
-        offenders.extend(scan_source(src, os.path.relpath(path, root), extra_classes=all_classes))
+        offenders.extend(
+            scan_source(src, os.path.relpath(path, root), extra_classes=all_classes)
+        )
     return offenders
 
 
@@ -186,19 +210,28 @@ class OverrideScanTests(TestCase):
     def test_no_override_drops_the_module_tick(self):
         offenders = scan_tree()
         self.assertEqual(
-            offenders, [],
-            "These get_permissions / @action(permission_classes=...) overrides replace the "
-            "class permissions without the module tick (add the _ModAccess_* class, or use "
+            offenders,
+            [],
+            "These get_permissions / @action(permission_classes=...) overrides "
+            "replace the "
+            "class permissions without the module tick (add the _ModAccess_* "
+            "class, or use "
             "IsOwnerOrAdmin if the action is owner/admin only): %s" % offenders,
         )
 
     def test_scan_covers_the_secondary_views_modules(self):
         names = {os.path.basename(p) for p in view_files()}
-        for expected in ("modifier_views.py", "till_views.py", "import_views.py", "ess_views.py", "views.py"):
+        for expected in (
+            "modifier_views.py",
+            "till_views.py",
+            "import_views.py",
+            "ess_views.py",
+            "views.py",
+        ):
             self.assertIn(expected, names)
 
     def test_every_requires_module_alias_is_a_known_tick_name(self):
-        """A new alias must be added to TICK_NAMES or the scan could not recognise it."""
+        """A new alias must be added to TICK_NAMES or the scan misses it."""
         found = set()
         for path in view_files():
             tree = ast.parse(open(path, encoding="utf-8").read())
@@ -214,7 +247,7 @@ class OverrideScanTests(TestCase):
 
 
 class ScannerDetectsOffendersTests(TestCase):
-    """Guard the guard: each synthetic offender must be reported, each clean one passed."""
+    """Guard the guard: each offender is reported, each clean one passes."""
 
     def _scan(self, src):
         return scan_source(src, "synthetic_views.py")
@@ -223,20 +256,25 @@ class ScannerDetectsOffendersTests(TestCase):
         offenders = self._scan(
             "class V:\n"
             "    permission_classes = [IsAuthenticated, _ModAccess_sales]\n"
-            "    @action(detail=False, permission_classes=[IsAuthenticated, IsManager])\n"
+            "    @action(detail=False, "
+            "permission_classes=[IsAuthenticated, IsManager])\n"
             "    def boom(self, request): pass\n"
         )
         self.assertEqual([(o[1], o[2]) for o in offenders], [("V", "boom")])
 
     def test_action_with_tick_or_admin_only_is_clean(self):
-        self.assertEqual(self._scan(
-            "class V:\n"
-            "    permission_classes = [IsAuthenticated, _ModAccess_sales]\n"
-            "    @action(permission_classes=[IsAuthenticated, IsManager, _ModAccess_sales])\n"
-            "    def a(self, request): pass\n"
-            "    @action(permission_classes=[IsAuthenticated, IsOwnerOrAdmin])\n"
-            "    def b(self, request): pass\n"
-        ), [])
+        self.assertEqual(
+            self._scan(
+                "class V:\n"
+                "    permission_classes = [IsAuthenticated, _ModAccess_sales]\n"
+                "    @action(permission_classes=[IsAuthenticated, IsManager, "
+                "_ModAccess_sales])\n"
+                "    def a(self, request): pass\n"
+                "    @action(permission_classes=[IsAuthenticated, IsOwnerOrAdmin])\n"
+                "    def b(self, request): pass\n"
+            ),
+            [],
+        )
 
     def test_mixed_branch_get_permissions_reports_the_bad_branch(self):
         offenders = self._scan(
@@ -266,7 +304,8 @@ class ScannerDetectsOffendersTests(TestCase):
         offenders = self._scan(
             "class V:\n"
             "    permission_classes = [IsAuthenticated, _ModAccess_sales]\n"
-            "    @action(permission_classes=[IsAuthenticated, IsOwnerOrAdminOrNothing])\n"
+            "    @action(permission_classes=[IsAuthenticated, "
+            "IsOwnerOrAdminOrNothing])\n"
             "    def a(self, request): pass\n"
         )
         self.assertEqual(len(offenders), 1)
@@ -293,7 +332,8 @@ class ScannerDetectsOffendersTests(TestCase):
 
     def test_tick_inherited_from_a_base_in_another_file_is_scanned(self):
         base = ast.parse(
-            "class Base:\n    permission_classes = [IsAuthenticated, _ModAccess_inventory]\n"
+            "class Base:\n"
+            "    permission_classes = [IsAuthenticated, _ModAccess_inventory]\n"
         ).body
         offenders = scan_source(
             "class Child(Base):\n"
@@ -355,7 +395,7 @@ class ScannerDetectsOffendersTests(TestCase):
 
 
 class FixedOverridesBehaviourTests(TestCase):
-    """Without the tick -> 403 (decided before the object lookup); with it -> past the gate."""
+    """No tick -> 403 (decided before the object lookup); tick -> past the gate."""
 
     def setUp(self):
         from apps.accounting.tests import _upgrade_to_business
@@ -367,7 +407,9 @@ class FixedOverridesBehaviourTests(TestCase):
 
     def _pair(self, tag, role, module, level="edit"):
         _, none, _ = _member(self.org, f"ov_{tag}_none@example.com", role)
-        _, ticked, _ = _member(self.org, f"ov_{tag}_yes@example.com", role, module, level)
+        _, ticked, _ = _member(
+            self.org, f"ov_{tag}_yes@example.com", role, module, level
+        )
         return none, ticked
 
     def test_sales_invoice_actions(self):
@@ -379,16 +421,31 @@ class FixedOverridesBehaviourTests(TestCase):
                 self.assertEqual(none.post(url, {}, format="json").status_code, 403)
                 # Past the gate: the unknown invoice is a 404 (confirm_proforma
                 # wraps its own lookup and answers 422), never a 403.
-                self.assertIn(ticked.post(url, {}, format="json").status_code, (404, 422))
+                self.assertIn(
+                    ticked.post(url, {}, format="json").status_code, (404, 422)
+                )
 
     def test_void_needs_edit_level_not_write(self):
         url = f"/api/v1/sales/invoices/{self.missing}/void/"
         _, none, _ = _member(self.org, "ov_v_none@example.com", "staff")
-        _, view, _ = _member(self.org, "ov_v_view@example.com", "staff", "sales", "view")
-        _, write, _ = _member(self.org, "ov_v_write@example.com", "staff", "sales", "write")
-        _, edit, _ = _member(self.org, "ov_v_edit@example.com", "staff", "sales", "edit")
-        _, wrong, _ = _member(self.org, "ov_v_wrong@example.com", "staff", "quotes", "edit")
-        for label, client in (("none", none), ("view", view), ("write", write), ("wrong", wrong)):
+        _, view, _ = _member(
+            self.org, "ov_v_view@example.com", "staff", "sales", "view"
+        )
+        _, write, _ = _member(
+            self.org, "ov_v_write@example.com", "staff", "sales", "write"
+        )
+        _, edit, _ = _member(
+            self.org, "ov_v_edit@example.com", "staff", "sales", "edit"
+        )
+        _, wrong, _ = _member(
+            self.org, "ov_v_wrong@example.com", "staff", "quotes", "edit"
+        )
+        for label, client in (
+            ("none", none),
+            ("view", view),
+            ("write", write),
+            ("wrong", wrong),
+        ):
             with self.subTest(level=label):
                 self.assertEqual(client.post(url, {}, format="json").status_code, 403)
         # Edit passes the gate: the unknown invoice is a 404.
@@ -402,7 +459,9 @@ class FixedOverridesBehaviourTests(TestCase):
 
     def test_sales_void_and_pay_split_now_refuse_low_roles(self):
         """These two had only IsAuthenticated: a viewer could void an invoice."""
-        _, viewer, _ = _member(self.org, "ov_viewer@example.com", "viewer", "sales", "edit")
+        _, viewer, _ = _member(
+            self.org, "ov_viewer@example.com", "viewer", "sales", "edit"
+        )
         for action in ("void", "pay_split"):
             with self.subTest(action=action):
                 url = f"/api/v1/sales/invoices/{self.missing}/{action}/"

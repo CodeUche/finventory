@@ -22,7 +22,8 @@ from apps.payroll.test_track_a import _make_org, _make_user
 
 @unittest.skipUnless(
     hasattr(permissions, "RegisterSellingRead"),
-    "RegisterSellingRead (cashier fix, feat/global-ds-polish aa1a106) is not merged yet",
+    "RegisterSellingRead (cashier fix, feat/global-ds-polish aa1a106) "
+    "is not merged yet",
 )
 class RegisterCashierAfterMergeTests(TestCase):
     def setUp(self):
@@ -31,15 +32,26 @@ class RegisterCashierAfterMergeTests(TestCase):
         self.warehouse = Warehouse.objects.create(
             organisation=self.org, name="Main", is_default=True)
         self.product = Product.objects.create(
-            organisation=self.org, sku="RSM-1", name="Till Item", product_type="physical",
-            cost_price="100.00", selling_price="150.00", unit_of_measure="unit",
+            organisation=self.org,
+            sku="RSM-1",
+            name="Till Item",
+            product_type="physical",
+            cost_price="100.00",
+            selling_price="150.00",
+            unit_of_measure="unit",
         )
         # A cashier: staff, sales write, nothing else.
-        _, self.cashier, _ = _member(self.org, "rsm_cashier@example.com", "staff", "sales", "write")
+        _, self.cashier, _ = _member(
+            self.org, "rsm_cashier@example.com", "staff", "sales", "write"
+        )
 
     def test_cashier_can_read_products_and_warehouses(self):
-        self.assertEqual(self.cashier.get("/api/v1/inventory/products/").status_code, 200)
-        self.assertEqual(self.cashier.get("/api/v1/inventory/warehouses/").status_code, 200)
+        self.assertEqual(
+            self.cashier.get("/api/v1/inventory/products/").status_code, 200
+        )
+        self.assertEqual(
+            self.cashier.get("/api/v1/inventory/warehouses/").status_code, 200
+        )
 
     def test_cashier_cannot_read_stock_levels(self):
         self.assertEqual(self.cashier.get("/api/v1/inventory/stock/").status_code, 403)

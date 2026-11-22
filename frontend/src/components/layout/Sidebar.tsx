@@ -19,6 +19,9 @@ import { CATEGORY_ORDER } from '@/lib/reportCategories'
 import { useReportCatalog } from '@/hooks/useReportCatalog'
 import type { ModuleKey } from '@/types'
 import '@/styles/app-shell.css'
+import { useCanSeeNavItem } from '@/lib/navAccess'
+import { HUB_FOR_GROUP } from '@/pages/hubs/hubConfig'
+import MiniFlyout from './MiniFlyout'
 import { DesignerIcon, type DesignerIconName } from '@/assets/designer-icons'
 
 /** Wraps a designer icon so it can sit in the nav data like a lucide icon. */
@@ -78,7 +81,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Sales Returns', href: '/sales/returns', icon: RotateCcw, module: 'sales' },
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
       { name: 'Register (Till)', href: '/pos/register', icon: ShoppingCart, module: 'sales' },
-      { name: 'New Sale / Invoice', href: '/sales/new', icon: Receipt, module: 'sales' },
+      { name: 'New sale & invoice', href: '/sales/new', icon: Receipt, module: 'sales' },
       { name: 'POS Orders', href: '/pos/restaurant', icon: ClipboardList, module: 'sales' },
       { name: 'Till / Cash-up', href: '/pos/till', icon: Wallet, module: 'sales' },
       { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },
@@ -168,16 +171,16 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
 // navGroups stay as they are (they are state keys and what the command palette
 // groups by); only what the sidebar shows changes.
 const GROUP_TITLES: Record<string, string> = {
-  'ACCOUNTING & FINANCE': 'Accounting & Finance',
+  'ACCOUNTING & FINANCE': 'Accounting',
   'CUSTOMERS & RECEIPTS': 'Customers & Receipts',
   'SALES & POS': 'Sales & POS',
   'PROCUREMENT': 'Procurement',
   'INVENTORY': 'Inventory',
   'HR': 'HR',
-  'CASHFLOW': 'Cashflow',
+  'CASHFLOW': 'Income & Expenses',
   'COMPLIANCE': 'Compliance',
   'BILLING & PLANS': 'Billing & Plans',
-  'HELP DESK': 'Help Desk',
+  'HELP DESK': 'Tickets',
 }
 const GROUP_ICONS: Record<string, React.ElementType> = {
   'ACCOUNTING & FINANCE': ICON.accounting,
@@ -208,6 +211,21 @@ const REPORTS_FIXED_LINKS: { name: string; href: string; icon: React.ElementType
   { name: 'Sales by Product', href: '/reports/sales-by-product', icon: ShoppingCart, module: 'reports' },
 ]
 
+// General Reports sits right after the 6th group (HR) in the designer's menu.
+const REPORTS_AFTER = 7
+
+// True on desktop widths (where the sidebar can fold into an icon rail).
+function useIsDesktop() {
+  const [yes, setYes] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width:1024px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width:1024px)')
+    const on = () => setYes(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return yes
+}
+
 interface SidebarProps {
   open: boolean
   onClose: () => void
@@ -215,39 +233,12 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ open, onClose, billingOnly = false }: SidebarProps) {
-  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules, planName } = useAuthStore()
+  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules } = useAuthStore()
   const navigate = useNavigate()
 
-  // null = membership not yet loaded; treat as restricted (not full access) until confirmed
-  const isOwnerOrAdmin = user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
+  // Visibility rules live in one shared hook (also used by the hub pages).
+  const { canSeeItem, isOwnerOrAdmin } = useCanSeeNavItem()
   const { pathname, search } = useLocation()
-
-  // Returns true if the nav item should be visible.
-  // Checks: ownerOnly → plan modules → sub-account RBAC permissions
-  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean, businessType?: string) => {
-    const membershipLoading = memberRole === null && !user?.is_superuser
-    if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
-    if (partnerOnly && !user?.is_superuser && !planName?.startsWith('partner')) return false
-    // Business-type gate (e.g. restaurant-only POS): hide once the org's type is known
-    // and differs. Fail-open while the org type is still loading.
-    const orgBusinessType = (organisation as { business_type?: string } | null)?.business_type
-    if (businessType && orgBusinessType && orgBusinessType !== businessType) return false
-    // Owner-only items (Billing & Plans, Connectors, Tickets...) have no module,
-    // so this test must run before the "no module" early return below.
-    if (ownerOnly && !isOwnerOrAdmin && !user?.is_superuser) return false
-    if (!mod) return true                             // no module restriction (dashboard, settings)
-    if (user?.is_superuser) return true              // superusers always see everything
-    // Plan-level gate: if the active plan restricts modules, only show allowed ones
-    if (planModules !== null && !planModules.includes(mod)) return false
-    // While membership is loading, hide all module items — sub-accounts must not see
-    // modules they have no access to, even briefly. Sub-account login now pre-loads
-    // membership in the response so this window is typically zero for staff logins.
-    if (membershipLoading) return false
-    if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
-    if (isOwnerOrAdmin) return true                   // owners/admins see all plan-allowed modules
-    const level = modulePermissions?.[mod]
-    return level === 'view' || level === 'write' || level === 'edit'
-  }
 
   // Track which groups are collapsed.
   // A group starts collapsed only if it contains no active route.
@@ -315,7 +306,12 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
   // ─── Mini (collapsed) sidebar — desktop only, persisted ────────────────────
   const [mini, setMini] = useState<boolean>(() => {
-    try { return localStorage.getItem('audity-sidebar-mini') === '1' } catch { return false }
+    try {
+      const saved = localStorage.getItem('audity-sidebar-mini')
+      if (saved !== null) return saved === '1'
+    } catch { /* storage blocked: fall through to the width rule */ }
+    // Nothing saved yet on this device: start collapsed on tablet widths, open on wide screens.
+    return typeof window !== 'undefined' && window.innerWidth < 1280
   })
   const toggleMini = () => setMini((v) => {
     const next = !v
@@ -354,7 +350,125 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
     if (activeGroup) setReportGroupsOpen((prev) => (prev[activeGroup] ? prev : { ...prev, [activeGroup]: true }))
   }, [activeReportKey, reportsGrouped.length])
 
-  const rowClass = (isActive: boolean) => cn('sh-row', isActive && 'sh-row-on')
+  // Only the best (longest) matching link is highlighted, so /budgets/periods does not
+  // also light up /budgets, and /reports/stock does not also light up /reports.
+  const bestHref = [
+    ...navGroups.flatMap((g) => g.items.map((i) => i.href.split('#')[0])),
+    ...REPORTS_FIXED_LINKS.map((i) => i.href),
+    ...Object.values(HUB_FOR_GROUP).map((h) => `/hub/${h.slug}`),
+  ]
+    .filter((h) => pathname === h || pathname.startsWith(h + '/'))
+    .sort((a, b) => b.length - a.length)[0]
+  const isBest = (href: string) => href.split('#')[0] === bestHref
+  const rowClass = (isActive: boolean, href?: string) =>
+    cn('sh-row', isActive && (href === undefined || isBest(href)) && 'sh-row-on')
+
+  // Collapsed rail on desktop: each group becomes one icon with a pop-out list.
+  const isDesktop = useIsDesktop()
+  const railMode = mini && isDesktop
+
+  // One sidebar group (header + its links). Rendered in two runs so General Reports can sit after HR, as in the designer's menu.
+  const renderGroup = (group: (typeof navGroups)[number], gi: number) => {
+      const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
+      const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly, item.businessType))
+      if (group.label && visibleItems.length === 0) return null
+
+      const renderLink = (item: typeof visibleItems[number], withCollapse = false) => {
+        const isLocked = billingOnly && item.href !== '/billing'
+        const node = isLocked ? (
+          <span key={item.href} className="sh-row sh-row-locked">
+            <item.icon size={20} className="sh-ico shrink-0" />
+            <span className="sh-label">{item.name}</span>
+          </span>
+        ) : (
+          <NavLink
+            key={item.href}
+            to={item.href}
+            title={item.name}
+            end={item.href === '/sales'}
+            className={({ isActive }) => rowClass(isActive, item.href)}
+          >
+            <item.icon size={20} className="sh-ico shrink-0" />
+            <span className="sh-label">{item.name}</span>
+          </NavLink>
+        )
+        if (!withCollapse) return node
+        return (
+          <div key={item.href} className="relative">
+            {node}
+            <button
+              onClick={toggleMini}
+              title={mini ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={mini ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="sh-collapse hidden lg:flex"
+            >
+              {mini ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            </button>
+          </div>
+        )
+      }
+
+      // Single-item labeled groups normally render as a plain NavLink (no
+      // collapsible toggle). Groups flagged `alwaysGroup` keep their heading
+      // even with one item, so a module like Cashflow reads as a module
+      // rather than a loose link.
+      if (group.label && visibleItems.length === 1 && !group.alwaysGroup) {
+        return renderLink(visibleItems[0])
+      }
+
+      // Unlabelled first group: Dashboard (+ partner links) as top-level rows.
+      if (!group.label) {
+        return visibleItems.map((item, ii) => renderLink(item, gi === 0 && ii === 0))
+      }
+
+      const GroupIcon = GROUP_ICONS[group.label] ?? LayoutGrid
+      if (railMode) {
+        const hub = HUB_FOR_GROUP[group.label]
+        return (
+          <MiniFlyout
+            key={gi}
+            icon={GroupIcon}
+            label={GROUP_TITLES[group.label] ?? group.label}
+            active={visibleItems.some((i) => isBest(i.href))}
+            items={[
+              ...(hub ? [{ name: 'Overview', to: `/hub/${hub.slug}`, icon: LayoutGrid, active: isBest(`/hub/${hub.slug}`) }] : []),
+              ...visibleItems.map((i) => ({ name: i.name, to: i.href, icon: i.icon, active: isBest(i.href) })),
+            ]}
+          />
+        )
+      }
+      return (
+        <div key={gi}>
+          <button
+            onClick={() => !billingOnly && toggleGroup(group.label!)}
+            className={cn('sh-row sh-group-head', billingOnly && 'opacity-40')}
+            aria-expanded={!isCollapsed}
+          >
+            <GroupIcon size={20} className="sh-ico shrink-0" />
+            <span className="sh-label">{GROUP_TITLES[group.label] ?? group.label}</span>
+            {!billingOnly && (isCollapsed
+              ? <ChevronRight size={16} className="sh-caret" />
+              : <ChevronDown size={16} className="sh-caret" />
+            )}
+          </button>
+          {!isCollapsed && (
+            <div className="sh-sub">
+              {HUB_FOR_GROUP[group.label] && (
+                <NavLink
+                  to={`/hub/${HUB_FOR_GROUP[group.label].slug}`}
+                  title={`${GROUP_TITLES[group.label] ?? group.label} overview`}
+                  className={({ isActive }) => rowClass(isActive, `/hub/${HUB_FOR_GROUP[group.label!].slug}`)}
+                >
+                  <LayoutGrid size={20} className="sh-ico shrink-0" />
+                  <span className="sh-label">Overview</span>
+                </NavLink>
+              )}
+              {visibleItems.map((item) => renderLink(item))}
+            </div>
+          )}
+        </div>
+      )
+  }
 
   return (
     <aside
@@ -378,7 +492,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           <div className="flex items-center gap-1.5">
             <p className="flex-1">{organisation.name}</p>
             {FEATURES.PARTNER_CHANNEL && organisation.managing_firm_name && (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 shrink-0 uppercase tracking-wide">CLIENT</span>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 shrink-0 uppercase tracking-wide">CLIENT</span>
             )}
           </div>
           <p>{organisation.currency}</p>
@@ -387,85 +501,20 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
       {/* Nav */}
       <nav className="sh-nav">
-        {navGroups.map((group, gi) => {
-          const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
-          const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly, item.businessType))
-          if (group.label && visibleItems.length === 0) return null
-
-          const renderLink = (item: typeof visibleItems[number], withCollapse = false) => {
-            const isLocked = billingOnly && item.href !== '/billing'
-            const node = isLocked ? (
-              <span key={item.href} className="sh-row sh-row-locked">
-                <item.icon size={20} className="sh-ico shrink-0" />
-                <span className="sh-label">{item.name}</span>
-              </span>
-            ) : (
-              <NavLink
-                key={item.href}
-                to={item.href}
-                title={item.name}
-                end={item.href === '/sales'}
-                className={({ isActive }) => rowClass(isActive)}
-              >
-                <item.icon size={20} className="sh-ico shrink-0" />
-                <span className="sh-label">{item.name}</span>
-              </NavLink>
-            )
-            if (!withCollapse) return node
-            return (
-              <div key={item.href} className="relative">
-                {node}
-                <button
-                  onClick={toggleMini}
-                  title={mini ? 'Expand sidebar' : 'Collapse sidebar'}
-                  aria-label={mini ? 'Expand sidebar' : 'Collapse sidebar'}
-                  className="sh-collapse hidden lg:flex"
-                >
-                  {mini ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-                </button>
-              </div>
-            )
-          }
-
-          // Single-item labeled groups normally render as a plain NavLink (no
-          // collapsible toggle). Groups flagged `alwaysGroup` keep their heading
-          // even with one item, so a module like Cashflow reads as a module
-          // rather than a loose link.
-          if (group.label && visibleItems.length === 1 && !group.alwaysGroup) {
-            return renderLink(visibleItems[0])
-          }
-
-          // Unlabelled first group: Dashboard (+ partner links) as top-level rows.
-          if (!group.label) {
-            return visibleItems.map((item, ii) => renderLink(item, gi === 0 && ii === 0))
-          }
-
-          const GroupIcon = GROUP_ICONS[group.label] ?? LayoutGrid
-          return (
-            <div key={gi}>
-              <button
-                onClick={() => !billingOnly && toggleGroup(group.label!)}
-                className={cn('sh-row sh-group-head', billingOnly && 'opacity-40')}
-                aria-expanded={!isCollapsed}
-              >
-                <GroupIcon size={20} className="sh-ico shrink-0" />
-                <span className="sh-label">{GROUP_TITLES[group.label] ?? group.label}</span>
-                {!billingOnly && (isCollapsed
-                  ? <ChevronRight size={16} className="sh-caret" />
-                  : <ChevronDown size={16} className="sh-caret" />
-                )}
-              </button>
-              {!isCollapsed && (
-                <div className="sh-sub">{visibleItems.map((item) => renderLink(item))}</div>
-              )}
-            </div>
-          )
-        })}
+        {navGroups.slice(0, REPORTS_AFTER).map((g, i) => renderGroup(g, i))}
 
         {/* GENERAL REPORTS sub-nav — fixed links to the dedicated report
             pages, then a fetched, collapsible category tree mirroring
             AllReportsPage.tsx's "General Reports" hub (/reports/all), same
             two-level pattern as the SETTINGS sub-nav below. */}
+        {!billingOnly && canSeeItem('reports') && railMode && (
+          <MiniFlyout
+            icon={ICON.reports}
+            label="General Reports"
+            active={pathname.startsWith('/reports')}
+            items={REPORTS_FIXED_LINKS.filter((i) => canSeeItem(i.module)).map((i) => ({ name: i.name, to: i.href, icon: i.icon, active: isBest(i.href) }))}
+          />
+        )}
         {!billingOnly && canSeeItem('reports') && (
           <div className="sh-mini-hide">
             <button
@@ -489,7 +538,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                       to={item.href}
                       end={item.href === '/reports/all'}
                       title={item.name}
-                      className={({ isActive }) => rowClass(isActive)}
+                      className={({ isActive }) => rowClass(isActive, item.href)}
                     >
                       <item.icon size={18} className="sh-ico shrink-0" />
                       <span className="sh-label">{item.name}</span>
@@ -529,6 +578,8 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           </div>
         )}
 
+        {navGroups.slice(REPORTS_AFTER).map((g, i) => renderGroup(g, i + REPORTS_AFTER))}
+
         {/* Owner-only analytics — hidden in billing-only mode */}
         {!billingOnly && isOwnerOrAdmin && canSeeItem('owner_analytics') && (
           <NavLink
@@ -541,6 +592,14 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
         )}
 
         {/* Settings sub-nav — collapsible with sub-groups */}
+        {!billingOnly && railMode && (
+          <MiniFlyout
+            icon={ICON.settings}
+            label="Settings"
+            active={pathname === '/settings'}
+            items={visibleSettingsTabs.map((t) => ({ name: t.label, to: `/settings?tab=${t.id}`, icon: t.icon, active: pathname === '/settings' && activeSettingsTab === t.id }))}
+          />
+        )}
         {!billingOnly && (
           <div className="sh-mini-hide">
             {/* Top-level SETTINGS toggle */}
@@ -605,9 +664,9 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             <span className="sh-label">Platform Admin</span>
           </NavLink>
         )}
-        <button onClick={handleLogout} title="Sign out" className="sh-row sh-row-danger">
+        <button onClick={handleLogout} title="Sign Out" className="sh-row sh-row-danger">
           <ICON.signOut size={20} className="sh-ico shrink-0" />
-          <span className="sh-label">Sign out</span>
+          <span className="sh-label">Sign Out</span>
         </button>
       </div>
     </aside>

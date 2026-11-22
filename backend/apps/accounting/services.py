@@ -1,5 +1,7 @@
 import logging
 from datetime import date
+
+from django.utils import timezone as _tzmod
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import F, Q, Sum
@@ -928,7 +930,7 @@ class AccountingService:
         from datetime import date as _date
         from django.utils import timezone
         from .models import FiscalYear
-        as_of = as_of or timezone.now().date()
+        as_of = as_of or timezone.localdate()   # business-local (Lagos) date
         fy = FiscalYear.objects.filter(
             organisation=organisation, start_date__lte=as_of, end_date__gte=as_of,
         ).order_by('-start_date').first()
@@ -985,7 +987,7 @@ class AccountingService:
     def account_deactivation_warning(account):
         """A caution (not a block) for deactivating an account with postings this fiscal year."""
         from django.utils import timezone
-        year_start = AccountingService.fiscal_year_start(account.organisation, timezone.now().date())
+        year_start = AccountingService.fiscal_year_start(account.organisation, timezone.localdate())
         has = JournalLine.objects.filter(
             journal_entry__organisation=account.organisation, account=account,
             journal_entry__status='posted', journal_entry__entry_date__gte=year_start,
@@ -1888,7 +1890,7 @@ class AccountingService:
         if not original_lines:
             raise ValueError(f"Journal entry {journal_entry.reference} has no lines to reverse.")
 
-        entry_date = entry_date or _tz.now().date()
+        entry_date = entry_date or _tz.localdate()   # business-local (Lagos) date
         AccountingService.assert_period_open(
             journal_entry.organisation, entry_date, actor,
             ref=journal_entry.reference, source=f'reversal/{journal_entry.id}',
@@ -1897,6 +1899,7 @@ class AccountingService:
         reversing_entry = JournalEntry.objects.create(
             organisation=journal_entry.organisation,
             description=f"Reversal of {journal_entry.reference}: {journal_entry.description}",
+            # today (business-local) unless the caller says otherwise
             entry_date=entry_date,
             reference='',  # auto-assigned in save()
             status='posted',
@@ -1935,196 +1938,33 @@ class AccountingService:
 
     @staticmethod
     def post_sale_journal(organisation, invoice, user=None):
-        """DR Cash/Bank/AR → CR Revenue + VAT, then (own journal) DR COGS → CR Inventory."""
-        from apps.sales.models import SalePayment
-        from .exceptions import GLAccountNotConfigured
-        zero = Decimal('0')
-        total = Decimal(str(invoice.total_amount))
-        tax = Decimal(str(invoice.tax_amount or 0))
-        revenue = total - tax
-
-        # Determine payment method → which asset account to debit
-        payment = SalePayment.objects.filter(invoice=invoice).first()
-        # Honour the customer's own receivable-account override (set on the
-        # customer record) before falling back to the org default — previously
-        # every sale ignored it and always posted to the org-wide AR account.
-        ar_acct = AccountingService._resolve_party_account(
-            organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
-
-        if payment:
-            if payment.method == 'cash':
-                asset_account = AccountMappingService.resolve(organisation, 'cash_account')
-            elif payment.method in ('bank_transfer', 'pos'):
-                asset_account = AccountMappingService.resolve(organisation, 'bank_account')
-            else:
-                asset_account = ar_acct
+        """Post (or re-post, idempotently) an invoice's sale entry. The posting
+        rules live in apps.sales.ledger; this is the retained entry point for the
+        GL-retry path. Raises on failure."""
+        from apps.sales import ledger
+        if invoice.status == 'voided':
+            raise ValueError("This invoice is voided; a voided invoice is never posted to the ledger.")
+        if invoice.is_deferred and invoice.fulfilled_at is None:
+            mode, entry_date = 'deferred', invoice.issue_date
+        elif invoice.is_deferred and ledger.is_new_style_deferred(invoice):
+            mode, entry_date = 'fulfilment', invoice.fulfilled_at.date()
+        elif invoice.is_deferred:
+            mode, entry_date = 'full', invoice.fulfilled_at.date()
         else:
-            asset_account = ar_acct
-
-        revenue_acct_default = AccountMappingService.resolve(organisation, 'revenue_account')
-        # Optional and deliberately non-raising, unlike .resolve() above: an org
-        # that has never configured this (every org before this field existed)
-        # must keep posting shipping to plain revenue exactly as before, not
-        # start throwing GLAccountNotConfigured on its next invoice with a
-        # delivery charge.
-        shipping_acct = AccountMappingService.get_or_create_mapping(organisation).shipping_income_account \
-            or revenue_acct_default
-
-        # Per-item Sales/COGS/Wages overrides (Product.sales_account/cogs_account/
-        # wages_account) only change how this journal is BUILT, never posted, so
-        # an invoice where nothing overrides the org default produces the exact
-        # same lines as before — zero regression risk for the common case. Only
-        # once at least one item actually carries an override does this switch
-        # from one aggregate revenue/COGS line to netted per-account buckets.
-        # Item-class defaults (set per product_type in Settings, e.g. all
-        # "service" items to Service Revenue) count as an override too — a
-        # product with no override of its own still needs per-item resolution
-        # to pick up its class's default instead of the org-wide one.
-        items = list(
-            invoice.items.select_related(
-                'product__sales_account', 'product__cogs_account', 'product__wages_account',
-            ).all()
-        )
-        item_class_defaults = AccountMappingService.get_item_class_defaults(organisation)
-
-        def _class_default(product, role):
-            row = item_class_defaults.get(product.product_type)
-            return getattr(row, role, None) if row else None
-
-        has_override = any(
-            i.product.sales_account_id or i.product.cogs_account_id or i.product.wages_account_id
-            or _class_default(i.product, 'sales_account') or _class_default(i.product, 'cogs_account')
-            or _class_default(i.product, 'wages_account')
-            for i in items
-        )
-        revenue_acct = revenue_acct_default
-
-        # Partial cash/bank payment: split DR between cash/bank and AR
-        paid_amount = Decimal(str(payment.amount)) if payment else zero
-        remaining = Decimal(str(invoice.amount_due or 0))
-        is_partial_cash = payment and remaining > zero and asset_account.id != ar_acct.id
-
-        if is_partial_cash:
-            lines = [
-                (asset_account, paid_amount, zero),   # DR Cash/Bank (amount paid)
-                (ar_acct, remaining, zero),            # DR AR (remaining balance)
-            ]
-        else:
-            lines = [
-                (asset_account, total, zero),          # DR full amount to asset/AR
-            ]
-
-        if not has_override:
-            invoice_shipping = Decimal(str(invoice.shipping_amount or 0))
-            if invoice_shipping != zero and shipping_acct.id != revenue_acct.id:
-                # A distinct shipping-income account is configured — split it
-                # out so the income statement shows delivery income separately
-                # from product/service revenue. `revenue` (total - tax) has
-                # shipping baked in, so the product-only credit is the
-                # remainder.
-                lines.append((revenue_acct, zero, revenue - invoice_shipping))
-                lines.append((shipping_acct, zero, invoice_shipping))
-            else:
-                # No distinct account configured (the default for every org
-                # before this field existed) — unchanged: one line, shipping
-                # bundled into plain revenue exactly as before.
-                lines.append((revenue_acct, zero, revenue))
-        else:
-            # Per-item buckets can only ever account for the ITEM lines. An
-            # invoice's delivery/shipping charge belongs to no item, so it has
-            # to be credited explicitly here or the journal comes up short by
-            # exactly the shipping amount and post_journal_entry rejects the
-            # whole invoice. The non-override branch above never hit this
-            # because its single `revenue` figure (total - tax) already
-            # carries the shipping inside it. Shipping goes to the resolved
-            # shipping-income account (falling back to plain revenue when
-            # unconfigured), matching the non-override branch above.
-            shipping = Decimal(str(invoice.shipping_amount or 0))
-            revenue_buckets = {}
-            if shipping != zero:
-                revenue_buckets[shipping_acct.id] = [shipping_acct, shipping]
-            for i in items:
-                amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
-                if amt == 0:
-                    continue
-                acct = i.product.sales_account or _class_default(i.product, 'sales_account') or revenue_acct_default
-                slot = revenue_buckets.setdefault(acct.id, [acct, zero])
-                slot[1] += amt
-            for acct, amt in revenue_buckets.values():
-                if amt != 0:
-                    lines.append((acct, zero, amt))
-
-        if tax > zero:
-            vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
-            lines.append((vat_acct, zero, tax))
-
-        # COGS is its OWN journal (source_type 'sale_cogs'), built here and posted
-        # after the revenue / AR / Output VAT entry. A missing cogs or inventory
-        # mapping must never hold back the money side of a sale the customer
-        # already owes: the revenue entry always posts, and the COGS part raises
-        # GLAccountNotConfigured so safe_post_gl flags the invoice (GL Health,
-        # retry). Never swallowed: swallowing it used to post revenue with no
-        # cost of sales and still report 'posted', overstating profit.
-        cogs_lines = []
-        cogs_error = None
-        try:
-            if not has_override:
-                cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
-                if cogs_total > zero:
-                    cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
-                    inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
-                    cogs_lines.append((cogs_acct, cogs_total, zero))
-                    cogs_lines.append((inv_acct, zero, cogs_total))
-            else:
-                cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
-                inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
-                debit_buckets = {}
-                credit_buckets = {}
-                for i in items:
-                    amt = Decimal(str(i.cost_of_goods or 0))
-                    if amt == 0:
-                        continue
-                    product = i.product
-                    if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
-                        debit_acct = product.wages_account or _class_default(product, 'wages_account')
-                    else:
-                        debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
-                    credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
-                    d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
-                    d_slot[1] += amt
-                    c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
-                    c_slot[1] += amt
-                for acct, amt in debit_buckets.values():
-                    if amt != 0:
-                        cogs_lines.append((acct, amt, zero))
-                for acct, amt in credit_buckets.values():
-                    if amt != 0:
-                        cogs_lines.append((acct, zero, amt))
-        except GLAccountNotConfigured as exc:
-            cogs_error = exc
-
-        entry = AccountingService.post_journal_entry(
-            organisation, f"Sale {invoice.invoice_number}", invoice.issue_date,
-            lines, user,
-            ref=invoice.invoice_number,
-            source_type='sale',
-            source_ref=str(invoice.id),
-        )
-        if cogs_error is not None:
-            raise cogs_error
-        AccountingService._post_sale_cogs_entry(organisation, invoice, entry, cogs_lines, user)
-        return entry
+            mode, entry_date = 'full', invoice.issue_date
+        return ledger.post_sale_entry(organisation, invoice, user, mode=mode, entry_date=entry_date)
 
     @staticmethod
     def sale_cogs_posted(organisation, invoice) -> bool:
         """True when this invoice's cost of sales is in the ledger (own journal, or
-        inside a sale entry posted before the two were separated)."""
+        inside the sale entry, which is where the 0.4.0 sales ledger books it; an
+        edited invoice's re-posted entry has source_ref '<id>:rN', hence startswith)."""
         if JournalEntry.objects.filter(
                 organisation=organisation, source_type='sale_cogs', source_ref=str(invoice.id)).exists():
             return True
         return JournalLine.objects.filter(
             journal_entry__organisation=organisation, journal_entry__source_type='sale',
-            journal_entry__source_ref=str(invoice.id), journal_entry__status='posted',
+            journal_entry__source_ref__startswith=str(invoice.id), journal_entry__status='posted',
             account__account_type=AccountType.COST_OF_GOODS,
         ).exists()
 
@@ -2147,25 +1987,6 @@ class AccountingService:
         return [r for r in roles if mapping is None or getattr(mapping, f'{r}_id') is None]
 
     @staticmethod
-    def _post_sale_cogs_entry(organisation, invoice, sale_entry, cogs_lines, user):
-        """Post the cost-of-sales journal (DR COGS / CR Inventory) for an invoice. Idempotent.
-
-        An invoice whose revenue entry already carries a COGS line (posted before the
-        two were separated) is left alone, so a retry never doubles the cost."""
-        if not cogs_lines:
-            return None
-        if sale_entry is not None and sale_entry.lines.filter(
-                account__account_type=AccountType.COST_OF_GOODS).exists():
-            return None
-        return AccountingService.post_journal_entry(
-            organisation, f"Cost of sales {invoice.invoice_number}", invoice.issue_date,
-            cogs_lines, user,
-            ref=f"{invoice.invoice_number}-COGS",
-            source_type='sale_cogs',
-            source_ref=str(invoice.id),
-        )
-
-    @staticmethod
     def tender_asset_account(organisation, method: str):
         """Which asset account a tender lands in.
 
@@ -2176,7 +1997,8 @@ class AccountingService:
         """
         if method == 'cash':
             return AccountMappingService.resolve(organisation, 'cash_account')
-        if method in ('bank_transfer', 'pos', 'card', 'transfer'):
+        # a cheque is banked, not kept in the drawer
+        if method in ('bank_transfer', 'pos', 'card', 'transfer', 'cheque'):
             return AccountMappingService.resolve(organisation, 'bank_account')
         return AccountMappingService.resolve(organisation, 'cash_account')
 
@@ -2198,7 +2020,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             description=f"Payment received – {invoice.invoice_number}{label}",
-            entry_date=timezone.now().date(),
+            entry_date=timezone.localdate(),
             lines=[(asset, amt, zero), (ar_acct, zero, amt)],
             created_by=None,
             ref=invoice.invoice_number,
@@ -2229,7 +2051,7 @@ class AccountingService:
             (asset_acct, amt, zero),  # DR Cash/Bank per tender
             (ar_acct, zero, amt),     # CR Accounts Receivable
         ]
-        ref_date = date or timezone.now().date()
+        ref_date = date or timezone.localdate()
         if not source_ref:
             import uuid
             source_ref = f"CRPAY-{uuid.uuid4().hex}"
@@ -2820,7 +2642,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             f"Payroll paid {payroll_run.period_year}-{payroll_run.period_month:02d}",
-            pay_date or _date.today(),
+            pay_date or _tzmod.localdate(),
             [(payable, net, zero),
              (AccountMappingService.resolve(organisation, 'bank_account'), zero, net)],
             user, ref=f"PAYPAID-{payroll_run.id}",
@@ -2927,7 +2749,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             f"Remittance {remittance.get_remittance_type_display()} - {label}",
-            remittance.remittance_date or date.today(),
+            remittance.remittance_date or _tzmod.localdate(),
             [
                 (liability_acct, amount, Decimal('0')),
                 (bank_acct, Decimal('0'), amount),
@@ -2976,7 +2798,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             f"Salary advance - {advance.employee}",
-            (advance.disbursed_at.date() if advance.disbursed_at else date.today()),
+            (advance.disbursed_at.date() if advance.disbursed_at else _tzmod.localdate()),
             lines, user,
             ref=f"ADV-{advance.id}",
             source_type='salary_advance',
@@ -3136,7 +2958,7 @@ class AccountingService:
             ]
 
         return AccountingService.post_journal_entry(
-            organisation, desc, tz.now().date(), lines, user,
+            organisation, desc, tz.localdate(), lines, user,
             ref=ref, source_type='deferred_tax', source_ref=str(deferred_item.id),
         )
 
@@ -3460,6 +3282,8 @@ class AccountingService:
         if model_name == 'invoice':
             from apps.sales.models import Invoice
             obj = Invoice.objects.get(id=object_id, organisation=organisation)
+            if obj.status == Invoice.Status.VOIDED:
+                return False, "This invoice is voided; nothing to post."
             success, err = safe_post_gl(
                 AccountingService.post_sale_journal, organisation, obj, user,
                 model_instance=obj,
@@ -3921,7 +3745,7 @@ class CapitalisationService:
         zero = Decimal('0')
         if asset.disposal_date:
             return None
-        disposal_date = AccountingService._coerce_date(disposal_date) if disposal_date else _tz.now().date()
+        disposal_date = AccountingService._coerce_date(disposal_date) if disposal_date else _tz.localdate()
         proceeds = Decimal(str(proceeds or 0))
         gross = Decimal(str(asset.purchase_cost or 0))
         accum = Decimal(str(asset.accumulated_depreciation or 0))
@@ -3975,7 +3799,7 @@ class CapitalisationService:
         from django.utils import timezone as _tz
         from .models import AssetTransfer
         transfer_date = (AccountingService._coerce_date(transfer_date)
-                         if transfer_date else _tz.now().date())
+                         if transfer_date else _tz.localdate())
         xfer = AssetTransfer.objects.create(
             organisation=organisation, asset=asset, transfer_date=transfer_date,
             from_location=asset.location, to_location=to_location,
@@ -4017,7 +3841,7 @@ class CapitalisationService:
         from .models import AssetRevaluation, DepreciationEntry
         zero = Decimal('0')
         revaluation_date = (AccountingService._coerce_date(revaluation_date)
-                            if revaluation_date else _tz.now().date())
+                            if revaluation_date else _tz.localdate())
         new_value = Decimal(str(new_value))
         gross = Decimal(str(asset.purchase_cost or 0))
         accum = Decimal(str(asset.accumulated_depreciation or 0))

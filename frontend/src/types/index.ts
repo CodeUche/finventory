@@ -47,6 +47,8 @@ export interface Organisation {
   bank_account_name?: string
   bank_sort_code?: string
   brand_color?: string
+  /** The value the server holds, kept only when we show a different one (see lib/brandColor). */
+  brand_color_raw?: string
   invoice_company_name?: string
   company_name_font?: string
   company_name_font_color?: string
@@ -282,6 +284,11 @@ export interface SaleItem {
   quantity_returned: string
   unit_price: string
   line_total: string
+  /** Same fields the API sends on every sale line; used to rebuild a faithful re-print. */
+  discount_percent?: string
+  discount_amount?: string
+  tax_rate?: string
+  tax_amount?: string
   modifiers?: SaleItemModifier[]
 }
 

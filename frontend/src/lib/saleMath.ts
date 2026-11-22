@@ -44,11 +44,14 @@ export interface SaleLineAmounts {
   lineTotal: number
 }
 
-export function saleLine(l: SaleLineInput): SaleLineAmounts {
+/** One line's money. `adjustment` is this line's share of a whole-invoice adjustment (see
+ *  allocateAdjustment): it is added to the after-discount value BEFORE VAT, so the VAT moves with it,
+ *  exactly like the server's _commit_line. With no adjustment nothing changes. */
+export function saleLine(l: SaleLineInput, adjustment = 0): SaleLineAmounts {
   const rate = l.taxRate ?? 0
   const subtotal = roundMoney((l.quantity || 0) * (l.unitPrice || 0))
   const discount = roundMoney((subtotal * (l.discountPercent || 0)) / 100)
-  const after = roundMoney(subtotal - discount)
+  const after = roundMoney(subtotal - discount + adjustment)
   if (l.inclusive && rate > 0) {
     return { subtotal, discount, tax: roundMoney((after * rate) / (100 + rate)), lineTotal: after }
   }
@@ -61,13 +64,64 @@ export interface SaleTotals extends SaleLineAmounts {
   total: number
 }
 
-export function saleTotals(lines: SaleLineInput[], shipping = 0): SaleTotals {
-  const sum = lines.map(saleLine).reduce(
+/** Half-up to the kobo for a ratio of two whole-kobo numbers, away from zero on a tie, with no float error
+ *  (the server's Decimal ROUND_HALF_UP). */
+function ratioKobo(numer: bigint, denom: bigint): bigint {
+  const neg = (numer < 0n) !== (denom < 0n)
+  const n = numer < 0n ? -numer : numer
+  const d = denom < 0n ? -denom : denom
+  const q = (2n * n + d) / (2n * d)
+  return neg ? -q : q
+}
+const toKobo = (n: number): bigint => BigInt(Math.round(n * 100))
+
+export interface AdjustmentSplit {
+  /** Each line's share, in the order of the lines. Zeros when the adjustment is refused. */
+  shares: number[]
+  /** Why the server would refuse it, or null. */
+  error: 'no-value' | 'bigger-than-invoice' | 'line-below-zero' | null
+}
+
+/**
+ * Spread a signed whole-invoice adjustment over the lines in proportion to each line's after-discount value
+ * (before VAT). The last line takes the rounding remainder. Same steps and refusals as the server's
+ * SaleService._allocate_adjustment, so the figure on screen is the figure saved.
+ */
+export function allocateAdjustment(afters: number[], adjustment: number): AdjustmentSplit {
+  const zeros = afters.map(() => 0)
+  const adjK = toKobo(roundMoney(adjustment || 0))
+  if (adjK === 0n || afters.length === 0) return { shares: zeros, error: null }
+  const afterK = afters.map(toKobo)
+  const baseK = afterK.reduce((a, b) => a + b, 0n)
+  if (baseK <= 0n) return { shares: zeros, error: 'no-value' }
+  if (adjK < 0n && -adjK > baseK) return { shares: zeros, error: 'bigger-than-invoice' }
+  const sharesK: bigint[] = []
+  let running = 0n
+  afterK.forEach((a, i) => {
+    const share = i === afterK.length - 1 ? adjK - running : ratioKobo(adjK * a, baseK)
+    running += share
+    sharesK.push(share)
+  })
+  if (sharesK.some((sh, i) => afterK[i] + sh < 0n)) return { shares: zeros, error: 'line-below-zero' }
+  return { shares: sharesK.map((k) => Number(k) / 100), error: null }
+}
+
+export interface SaleBreakdown extends SaleTotals {
+  /** Per line, with its share of the adjustment already in (VAT included). */
+  lines: SaleLineAmounts[]
+  adjustmentError: AdjustmentSplit['error']
+}
+
+/** Every figure a sale screen shows, line by line, equal to what the server saves. `adjustment` is the
+ *  signed "Total adjustment"; `shipping` is outside VAT (the delivery-VAT switch is off). */
+export function saleBreakdown(inputs: SaleLineInput[], shipping = 0, adjustment = 0): SaleBreakdown {
+  const plain = inputs.map((l) => saleLine(l))
+  const split = allocateAdjustment(plain.map((a) => roundMoney(a.subtotal - a.discount)), adjustment)
+  const lines = inputs.map((l, i) => saleLine(l, split.shares[i]))
+  const sum = lines.reduce(
     (acc, l) => ({
-      subtotal: acc.subtotal + l.subtotal,
-      discount: acc.discount + l.discount,
-      tax: acc.tax + l.tax,
-      lineTotal: acc.lineTotal + l.lineTotal,
+      subtotal: acc.subtotal + l.subtotal, discount: acc.discount + l.discount,
+      tax: acc.tax + l.tax, lineTotal: acc.lineTotal + l.lineTotal,
     }),
     { subtotal: 0, discount: 0, tax: 0, lineTotal: 0 },
   )
@@ -77,7 +131,16 @@ export function saleTotals(lines: SaleLineInput[], shipping = 0): SaleTotals {
     tax: roundMoney(sum.tax),
     lineTotal: roundMoney(sum.lineTotal),
     total: roundMoney(sum.lineTotal + (shipping || 0)),
+    lines,
+    adjustmentError: split.error,
   }
+}
+
+/** The totals of a sale. `adjustment` is spread over the lines BEFORE VAT (see allocateAdjustment), so VAT
+ *  moves with it. */
+export function saleTotals(lines: SaleLineInput[], shipping = 0, adjustment = 0): SaleTotals {
+  const { subtotal, discount, tax, lineTotal, total } = saleBreakdown(lines, shipping, adjustment)
+  return { subtotal, discount, tax, lineTotal, total }
 }
 
 /** The VAT rate the server will apply to a product by default: its tax class's
@@ -88,4 +151,11 @@ export function productTaxRate(
 ): number {
   if (!product.is_taxable || !product.tax_class) return 0
   return ratesByClass[product.tax_class] ?? 0
+}
+
+/** The part of the VAT that is already inside the prices (VAT-inclusive lines). */
+export function saleTaxIncluded(lines: SaleLineInput[]): number {
+  return roundMoney(
+    lines.reduce((a, l) => a + (l.inclusive && (l.taxRate ?? 0) > 0 ? saleLine(l).tax : 0), 0),
+  )
 }

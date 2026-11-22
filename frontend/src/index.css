@@ -14,17 +14,17 @@
      status and currency dropdowns were white boxes with unreadable text on
      iPhone and Mac. Chromium honoured our background, which hid it. */
   color-scheme: dark;
-  --brand-300: 239 208 111; /* #EFD06F gold */
-  --brand-400: 232 182 90;  /* #E8B65A gold */
-  --brand-500: 212 160 23;  /* #D4A017 gold */
-  --brand-600: 184 137 31;  /* #B8891F gold */
+  --brand-300: 210 204 255; /* #D2CCFF accent 300 */
+  --brand-400: 164 153 255; /* #A499FF accent */
+  --brand-500: 47 99 230;   /* #2F63E6 primary (white text on it is 5:1) */
+  --brand-600: 21 88 234;   /* #1558EA primary */
 }
 html.light {
   color-scheme: light;
-  --brand-300: 28 47 92;    /* #1C2F5C navy */
-  --brand-400: 28 47 92;    /* #1C2F5C navy */
-  --brand-500: 8 31 68;     /* #081F44 navy */
-  --brand-600: 8 31 68;     /* #081F44 navy */
+  --brand-300: 17 0 153;    /* #110099 tertiary */
+  --brand-400: 17 0 153;    /* #110099 tertiary */
+  --brand-500: 21 88 234;   /* #1558EA primary */
+  --brand-600: 13 53 140;   /* #0D358C primary 800 */
 }
 
 @layer base {
@@ -53,7 +53,7 @@ html.light {
     background-color: #060C1C;
     background-image:
       radial-gradient(1100px 620px at 12% -8%, rgba(30, 47, 86, 0.60), transparent 62%),
-      radial-gradient(900px 650px at 105% 6%, rgba(212, 160, 23, 0.07), transparent 55%),
+      radial-gradient(900px 650px at 105% 6%, rgba(68, 121, 238, 0.08), transparent 55%),
       linear-gradient(155deg, #0B1730 0%, #060C1C 58%, #04091A 100%);
   }
 
@@ -79,12 +79,12 @@ html.light {
     mask-image: radial-gradient(85% 85% at 82% 34%, #000, transparent 80%);
   }
   .app-backdrop .ab-line   { stroke: #8FA4D6; fill: none; }
-  .app-backdrop .ab-gold   { stroke: #E8B65A; fill: none; }
-  .app-backdrop .ab-gold-f { fill: #E8B65A; }
+  .app-backdrop .ab-gold   { stroke: #A499FF; fill: none; }
+  .app-backdrop .ab-gold-f { fill: #A499FF; }
   html.light .app-backdrop-compass { opacity: 0.4; }
   html.light .app-backdrop .ab-line   { stroke: #1C2F5C; }
-  html.light .app-backdrop .ab-gold   { stroke: #C99A2E; }
-  html.light .app-backdrop .ab-gold-f { fill: #C99A2E; }
+  html.light .app-backdrop .ab-gold   { stroke: #4933FF; }
+  html.light .app-backdrop .ab-gold-f { fill: #4933FF; }
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -178,11 +178,9 @@ html.light {
 /* ── Light Mode Overrides ──────────────────────────────────────────────────── */
 html.light body,
 html.light .app-shell {
-  background-color: #F4F2EC; /* warm paper */
-  background-image:
-    radial-gradient(1100px 620px at 12% -8%, rgba(28, 47, 92, 0.07), transparent 62%),
-    radial-gradient(900px 650px at 105% 6%, rgba(212, 160, 23, 0.06), transparent 55%),
-    linear-gradient(155deg, #FBFAF6 0%, #F4F2EC 60%, #ECE9DF 100%);
+  /* The designer's light screens use flat ivory #FFFFF8 (measured from the exported screens), no gradient. */
+  background-color: #FFFFF8;
+  background-image: none;
 }
 html.light body { color: #0f172a; }
 /* Navy primary button reads as deep navy on light surfaces */
@@ -202,14 +200,16 @@ html.light .card-sm {
   border-color: #e2e8f0;
 }
 
+/* The kit's field colours (--ds-field is defined on <body class="ds">; the fallbacks are the same
+   values for a page rendered outside it). Before this, light fields were grey-blue slate. */
 html.light .input {
-  background-color: #f8fafc;
-  border-color: #cbd5e1;
-  color: #0f172a;
+  background-color: var(--ds-field, rgba(250, 250, 250, 0.95));
+  border-color: var(--ds-field-bd, #77767F);
+  color: var(--ds-ink, #1C1B1F);
 }
 
 html.light .input::placeholder {
-  color: #94a3b8;
+  color: #5F5E66; /* 5.9:1 on white, 5.3:1 on the kit's #FAFAFA */
 }
 
 html.light .btn-secondary {
@@ -330,9 +330,9 @@ html.light ::-webkit-scrollbar-thumb { background-color: #cbd5e1; }
    monetary figure, badge, and status indicator stays legible in light mode.   */
 html.light .text-red-400    { color: #b91c1c; }   /* red-700     */
 html.light .text-rose-400   { color: #be123c; }   /* rose-700    */
-html.light .text-orange-400 { color: #c2410c; }   /* orange-700 (semantic) */
-html.light .text-amber-400  { color: #92400e; }   /* amber-800   */
-html.light .text-yellow-400 { color: #854d0e; }   /* yellow-800  */
+html.light .text-orange-400 { color: #665100; }
+html.light .text-amber-400  { color: #665100; }   /* kit warning 800 */
+html.light .text-yellow-400 { color: #665100; }
 html.light .text-emerald-400 { color: #047857; }  /* emerald-700 */
 html.light .text-green-400  { color: #15803d; }   /* green-700   */
 html.light .text-teal-400   { color: #0f766e; }   /* teal-700    */
@@ -349,9 +349,9 @@ html.light .text-brand-400  { color: #1C2F5C; }   /* navy (light theme) */
 /* -300 shades are pastel — near-invisible on white. Remap to -700/-800 equivalents */
 html.light .text-red-300     { color: #b91c1c; }
 html.light .text-rose-300    { color: #be123c; }
-html.light .text-orange-300  { color: #c2410c; }   /* orange-700 (semantic) */
-html.light .text-amber-300   { color: #92400e; }
-html.light .text-yellow-300  { color: #854d0e; }
+html.light .text-orange-300  { color: #665100; }
+html.light .text-amber-300   { color: #665100; }
+html.light .text-yellow-300  { color: #665100; }
 html.light .text-emerald-300 { color: #047857; }
 html.light .text-green-300   { color: #15803d; }
 html.light .text-teal-300    { color: #0f766e; }
@@ -368,7 +368,7 @@ html.light .text-brand-300   { color: #1C2F5C; }   /* navy (light theme) */
 /* -500 shades on light bg */
 html.light .text-red-500     { color: #991b1b; }
 html.light .text-orange-500  { color: #9a3412; }   /* orange-800 (semantic) */
-html.light .text-amber-500   { color: #78350f; }
+html.light .text-amber-500   { color: #4D3B00; }
 html.light .text-emerald-500 { color: #065f46; }
 html.light .text-green-500   { color: #14532d; }
 html.light .text-blue-500    { color: #1e40af; }
@@ -391,13 +391,15 @@ html.light select option { color: #0f172a; background-color: #ffffff; }
 
 /* mono / code text */
 html.light .font-mono { color: #1e293b; }
+/* Designer kit: amounts/codes use Roboto with equal-width digits, not a monospace face. */
+.font-mono { font-variant-numeric: tabular-nums; }
 
 /* Badge backgrounds need higher contrast in light mode too */
 html.light .badge-red    { background-color: #fee2e2; color: #991b1b; border-color: #fca5a5; }
 html.light .badge-green  { background-color: #dcfce7; color: #166534; border-color: #86efac; }
 html.light .badge-blue   { background-color: #dbeafe; color: #1e40af; border-color: #93c5fd; }
-html.light .badge-yellow { background-color: #fef9c3; color: #713f12; border-color: #fde047; }
-html.light .badge-orange { background-color: #E7ECF5; color: #1C2F5C; border-color: #C3CFE3; }
+html.light .badge-yellow { background-color: #FFF5CC; color: #332900; border-color: #FEE067; }
+html.light .badge-orange { background-color: #E4E0FF; color: #110099; border-color: #B9B4F2; }
 html.light .badge-purple { background-color: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
 html.light .badge-slate  { background-color: #f1f5f9; color: #334155; border-color: #cbd5e1; }
 
@@ -459,7 +461,7 @@ html.light .force-dark .text-slate-400 { color: #94a3b8 !important; }
 html.light .force-dark .text-green-300  { color: #86efac !important; }
 html.light .force-dark .text-orange-300 { color: #fdba74 !important; }
 html.light .force-dark .text-red-400    { color: #f87171 !important; }
-html.light .force-dark .text-amber-400  { color: #fbbf24 !important; }
+html.light .force-dark .text-amber-400  { color: #FED634 !important; }
 html.light .force-dark .text-emerald-400 { color: #34d399 !important; }
 
 /* Always-white text — use on icons/labels placed on permanently-dark surfaces
@@ -491,7 +493,7 @@ html.light .force-dark .text-emerald-400 { color: #34d399 !important; }
 .legal-content table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.4rem; font-size: 13.5px; display: block; overflow-x: auto; }
 .legal-content th, .legal-content td { border: 1px solid #1E2F56; padding: .55rem .7rem; text-align: left; vertical-align: top; }
 .legal-content th { background: #13244B; color: #e2e8f0; font-weight: 600; }
-.legal-content .note { margin-top: 1.5rem; padding: .9rem 1.1rem; border-radius: 10px; background: rgba(212,160,23,.08); border: 1px solid rgba(212,160,23,.25); color: #E7D9AE; font-size: 13.5px; }
+.legal-content .note { margin-top: 1.5rem; padding: .9rem 1.1rem; border-radius: 10px; background: rgba(164,153,255,.10); border: 1px solid rgba(164,153,255,.30); color: #D2CCFF; font-size: 13.5px; }
 
 html.light .legal-content { color: #334155; }
 html.light .legal-content h2 { color: #0f172a; }

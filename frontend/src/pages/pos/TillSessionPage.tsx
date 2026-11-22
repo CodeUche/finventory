@@ -13,6 +13,8 @@ import {
 import toast from 'react-hot-toast'
 import { tillApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
+import { useAuthStore } from '@/store/authStore'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 
 interface TenderRow { method: string; expected: string; counted: string; variance: string; transaction_count: number }
@@ -49,9 +51,19 @@ const TENDER_LABEL: Record<string, string> = {
 }
 const tenderLabel = (m: string) => TENDER_LABEL[m] ?? m
 
+// Roles that may see the expected cash while closing. Everyone else (cashiers,
+// staff, and anyone whose role is still loading) does a blind count.
+const EXPECTED_CASH_ROLES = ['owner', 'admin', 'manager', 'accountant']
+
 export default function TillSessionPage() {
+  const { user, memberRole } = useAuthStore()
+  const canSeeExpected = user?.is_superuser === true
+    || (memberRole !== null && EXPECTED_CASH_ROLES.includes(memberRole))
   const [current, setCurrent] = useState<Current | null>(null)
+  const mounted = useIsMounted()
   const [loading, setLoading] = useState(true)
+  // True when the till's state could not be read (offline with no saved copy). Never shown as "no till".
+  const [unknown, setUnknown] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const [openingFloat, setOpeningFloat] = useState('')
@@ -63,9 +75,16 @@ export default function TillSessionPage() {
     setLoading(true)
     try {
       const { data } = await tillApi.current()
+      // While offline with nothing saved, the request layer hands back an empty placeholder
+      // (no `open` field). That is "we do not know", not "no till is open".
+      if (typeof data?.open !== 'boolean') { setUnknown(true); setCurrent(null); return }
+      setUnknown(false)
       setCurrent(data)
       if (!data.open) setCounted({})
-    } catch { toast.error('Could not load the till') }
+    } catch {
+      setUnknown(true)
+      if (mounted.current && navigator.onLine) toast.error('Could not load the till')
+    }
     finally { setLoading(false) }
   }
 
@@ -110,19 +129,21 @@ export default function TillSessionPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Till</h1>
           <p className="text-slate-400 text-sm">
-            {current?.open
-              ? `Open since ${formatDate(current.opened_at ?? '')}`
-              : 'No till open — start a shift to take cash'}
+            {unknown
+              ? 'Till status unavailable'
+              : current?.open
+                ? `Open since ${formatDate(current.opened_at ?? '')}`
+                : 'No till open — start a shift to take cash'}
           </p>
         </div>
         <button
           onClick={() => { bypassNextGets(); load() }}
           disabled={loading}
-          className="sm:ml-auto btn-ghost p-2 text-slate-400 hover:text-white"
+          className="btn-ghost p-2 text-slate-400 hover:text-white"
           title="Refresh"
         >
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
@@ -132,6 +153,15 @@ export default function TillSessionPage() {
       {loading ? (
         <div className="card p-10 flex justify-center">
           <Loader2 size={20} className="animate-spin text-slate-500" />
+        </div>
+      ) : unknown ? (
+        <div className="card p-6 max-w-md space-y-2" role="status">
+          <h2 className="text-base font-semibold text-white">Cannot check the till right now</h2>
+          <p className="text-sm text-slate-400">
+            You appear to be offline and there is no saved copy of the till. Reconnect to see
+            whether a till is open, then open or close it. This page refreshes by itself when the
+            connection returns.
+          </p>
         </div>
       ) : !current?.open ? (
         /* ── Open a shift ─────────────────────────────────────────────── */
@@ -159,20 +189,22 @@ export default function TillSessionPage() {
       ) : (
         /* ── Close the shift ──────────────────────────────────────────── */
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="ds-stats !mb-0">
             {[
               { k: 'Opening float', v: current.opening_float, s: 'Set at open' },
-              { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} transactions` },
-              { k: 'Cash expected', v: current.expected_cash, s: 'Float plus cash taken' },
-              { k: 'Non-cash', v: String(
-                  Number(current.sales_total ?? 0) -
-                  Number(current.by_tender?.cash?.expected ?? 0),
-                ), s: 'Card and transfer' },
+              ...(canSeeExpected ? [
+                { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} ${(current.transaction_count ?? 0) === 1 ? 'transaction' : 'transactions'}` },
+                { k: 'Cash expected', v: current.expected_cash, s: 'Float plus cash taken' },
+                { k: 'Non-cash', v: String(
+                    Number(current.sales_total ?? 0) -
+                    Number(current.by_tender?.cash?.expected ?? 0),
+                  ), s: 'Card and transfer' },
+              ] : []),
             ].map(({ k, v, s }) => (
-              <div key={k} className="card p-4">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500">{k}</p>
-                <p className="text-xl font-bold text-white font-mono mt-1">{formatCurrency(v ?? 0)}</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">{s}</p>
+              <div key={k} className="ds-stat is-tile">
+                <span className="ds-stat-label">{k}</span>
+                <span className="ds-stat-value">{formatCurrency(v ?? 0)}</span>
+                <span className="ds-stat-sub">{s}</span>
               </div>
             ))}
           </div>
@@ -183,8 +215,9 @@ export default function TillSessionPage() {
               <h2 className="text-base font-semibold text-white">Count the drawer</h2>
             </div>
             <p className="text-sm text-slate-400">
-              Enter what you have physically counted. The difference against what the
-              system expected is worked out when you close, and is posted to your accounts.
+              {canSeeExpected
+                ? 'Enter what you have physically counted. The difference against what the system expected is worked out when you close, and is posted to your accounts.'
+                : 'Count the drawer and enter what you have physically counted. The expected amount is not shown until you submit; any difference is worked out when you close.'}
             </p>
 
             <div className="space-y-2">

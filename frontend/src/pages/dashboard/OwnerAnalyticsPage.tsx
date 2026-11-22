@@ -19,7 +19,7 @@ function MetricCard({ label, value, sub, color = 'white' }: { label: string; val
   return (
     <div className="card p-5">
       <p className="text-xs text-slate-400 mb-1">{label}</p>
-      <p className={`text-2xl font-bold ${color === 'green' ? 'text-emerald-400' : color === 'orange' ? 'text-orange-400' : color === 'brand' ? 'text-brand-400' : 'text-white'}`}>{value}</p>
+      <p className={`text-2xl font-bold ${color === 'green' ? 'text-emerald-400' : color === 'orange' ? 'text-white' : color === 'brand' ? 'text-brand-400' : 'text-white'}`}>{value}</p>
       {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
     </div>
   )
@@ -91,7 +91,7 @@ export default function OwnerAnalyticsPage() {
               label="Margin Uplift"
               value={`${(parseFloat(data.owner_margin_pct) - parseFloat(data.company_margin_pct)).toFixed(1)}%`}
               sub="Owner margin vs company margin"
-              color="orange"
+              color="brand"
             />
           </div>
 

@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { MapPin, Plus, Pencil, Trash2, Phone, Building2, CheckCircle, XCircle, BarChart3, TrendingUp, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { locationApi } from '@/services/api'
+import { locationApi, savedMessage } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -27,6 +28,7 @@ interface SalesRow {
 }
 
 export default function LocationsPage() {
+  const mounted = useIsMounted()
   const [locations, setLocations] = useState<Location[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -47,19 +49,21 @@ export default function LocationsPage() {
       const { data } = await locationApi.salesAnalytics(period)
       setSalesRows(data.results ?? [])
     } catch {
-      toast.error('Failed to load sales data')
+      { if (mounted.current) toast.error('Failed to load sales data') }
     } finally {
       setLoadingSales(false)
     }
   }, [])
 
   useEffect(() => { loadSales(salesPeriod) }, [salesPeriod, loadSales])
+  // Reload the sales figures too when the connection returns or data changes.
+  useDataRefresh(() => { loadSales(salesPeriod) })
 
   const load = () => {
     setLoading(true)
     locationApi.list().then(({ data }) => {
       setLocations(data.results ?? data)
-    }).catch(() => toast.error('Failed to load locations')).finally(() => setLoading(false))
+    }).catch(() => { if (mounted.current) toast.error('Failed to load locations') }).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])
@@ -82,11 +86,11 @@ export default function LocationsPage() {
     setSaving(true)
     try {
       if (editing) {
-        await locationApi.update(editing.id, form)
-        toast.success('Location updated')
+        const res = await locationApi.update(editing.id, form)
+        toast.success(savedMessage(res, 'Location updated'))
       } else {
-        await locationApi.create(form)
-        toast.success('Location created')
+        const res = await locationApi.create(form)
+        toast.success(savedMessage(res, 'Location created'))
       }
       setShowModal(false)
       load()
@@ -101,8 +105,8 @@ export default function LocationsPage() {
   const handleDelete = async (id: string) => {
     setDeleting(id)
     try {
-      await locationApi.delete(id)
-      toast.success('Location deleted')
+      const res = await locationApi.delete(id)
+      toast.success(savedMessage(res, 'Location deleted'))
       load()
     } catch {
       toast.error('Failed to delete location')
@@ -279,7 +283,7 @@ export default function LocationsPage() {
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-800 rounded-2xl border border-surface-700 w-full max-w-md p-6 space-y-4">
+          <div className="card ds-modal w-full max-w-md p-6 space-y-4">
             <h2 className="text-lg font-bold text-white">
               {editing ? 'Edit Location' : 'New Location'}
             </h2>

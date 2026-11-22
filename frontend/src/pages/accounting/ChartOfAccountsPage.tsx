@@ -1,3 +1,4 @@
+import { resolveAccountGroup } from '@/lib/coaGroup'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -15,7 +16,7 @@ const TYPE_BADGE: Record<string, string> = {
   liability: 'badge-red',
   equity: 'badge-blue',
   revenue: 'badge-orange',
-  expense: 'badge-yellow',
+  expense: 'badge-slate',
   cogs: 'badge-slate',
 }
 
@@ -119,6 +120,15 @@ export default function ChartOfAccountsPage() {
     [taxonomy, form.account_group],
   )
 
+  // If the types finished loading after the pop-up opened, fill in the saved type now.
+  useEffect(() => {
+    if (!showModal || !editId || form.account_group || taxonomy.length === 0) return
+    const acct = accounts.find((a) => a.id === editId)
+    if (!acct) return
+    const g = resolveAccountGroup(taxonomy, acct)
+    if (g) setForm((f) => (f.account_group ? f : { ...f, account_group: g }))
+  }, [showModal, editId, taxonomy, accounts, form.account_group])
+
   const handleSeed = async () => {
     if (!(await confirmDialog('Seed default Chart of Accounts? This will add standard Nigerian accounting accounts.'))) return
     setSeeding(true)
@@ -144,7 +154,7 @@ export default function ChartOfAccountsPage() {
     setOrigOpening({ bal, date })
     setForm({
       code: a.code, name: a.name, account_type: a.account_type,
-      account_group: a.account_group ?? '', sub_type: a.sub_type ?? '',
+      account_group: resolveAccountGroup(taxonomy, a), sub_type: a.sub_type ?? '',
       parent: a.parent ?? '', description: a.description,
       normal_balance: (a.normal_balance || (['asset', 'expense', 'cogs'].includes(a.account_type) ? 'debit' : 'credit')) as 'debit' | 'credit',
       is_active: a.is_active, allow_posting: a.allow_posting ?? true,
@@ -320,14 +330,14 @@ export default function ChartOfAccountsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Chart of Accounts</h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="shrink-0">
+          <h1 className="text-2xl font-bold text-white whitespace-nowrap">Chart of Accounts</h1>
           <p className="text-slate-400 text-sm">
             {typeFilter === 'all' ? `${totalCount} accounts` : `${filteredAccounts.length} ${typeLabel(typeFilter)} accounts`}
           </p>
         </div>
-        <div className="sm:ml-auto flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center justify-end">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -437,7 +447,7 @@ export default function ChartOfAccountsPage() {
                     <span className="flex items-center gap-1.5">
                       {!showCodes && a._depth > 0 && <span className="text-slate-600">└</span>}
                       {a.name}
-                      {a.is_control_account && <span title="Control account — no direct journals"><Lock size={12} className="text-amber-400" /></span>}
+                      {a.is_control_account && <span title="Control account — no direct journals"><Lock size={12} className="text-slate-400" /></span>}
                       {a.sub_type_name && <span className="text-[10px] text-slate-500 border border-surface-600 rounded px-1">{a.sub_type_name}</span>}
                     </span>
                   </td>
@@ -456,7 +466,7 @@ export default function ChartOfAccountsPage() {
                   <td className="px-5 py-3.5">{a.is_system ? <span className="badge-blue">System</span> : <span className="text-slate-600">—</span>}</td>
                   <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => openEdit(a)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
+                      <button onClick={() => openEdit(a)} title="Edit account" aria-label={`Edit ${a.name}`} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
                       <button
                         onClick={() => handleDelete(a)}
                         disabled={a.is_system}

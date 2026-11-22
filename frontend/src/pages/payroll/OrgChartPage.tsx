@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, GitBranch, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import { payrollApi } from '@/services/api'
 import type { OrgChartNode } from '@/types'
+import '@/styles/orgchart.css'
 
 function initials(name: string) {
   return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase()
@@ -12,51 +13,33 @@ function initials(name: string) {
 function Node({ node, depth }: { node: OrgChartNode; depth: number }) {
   const [open, setOpen] = useState(depth < 2)
   const hasChildren = node.children.length > 0
-
   return (
-    <div className="relative">
-      <div
-        className="flex items-center gap-2.5 py-1.5"
-        style={{ paddingLeft: depth * 22 }}
-      >
-        {hasChildren ? (
+    <li>
+      <div className="oc-person">
+        <div className="oc-avatar" aria-hidden="true">{initials(node.name)}</div>
+        <p className="oc-name">{node.name}</p>
+        <p className="oc-role">{node.job_title}</p>
+        {node.department && <p className="oc-dept">{node.department}</p>}
+        {hasChildren && (
           <button
+            type="button"
             onClick={() => setOpen((o) => !o)}
-            className="p-0.5 rounded hover:bg-white/5 text-slate-400 shrink-0"
-            aria-label={open ? 'Collapse' : 'Expand'}
+            className="oc-toggle"
+            aria-expanded={open}
+            aria-label={`${open ? 'Hide' : 'Show'} ${node.children.length} direct report${node.children.length === 1 ? '' : 's'} of ${node.name}`}
           >
-            {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            {open ? 'Hide' : 'Show'} {node.children.length} report{node.children.length === 1 ? '' : 's'}
           </button>
-        ) : (
-          <span className="w-5 shrink-0" />
         )}
-
-        <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 min-w-0 flex-1">
-          <div className="w-8 h-8 rounded-full bg-brand-500/15 text-brand-400 grid place-items-center text-[11px] font-bold shrink-0">
-            {initials(node.name)}
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm text-white font-medium truncate">{node.name}</p>
-            <p className="text-[11px] text-slate-400 font-mono truncate">
-              {node.job_title}{node.department ? ` · ${node.department}` : ''}
-            </p>
-          </div>
-          {hasChildren && (
-            <span className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-slate-400 shrink-0">
-              {node.children.length} report{node.children.length === 1 ? '' : 's'}
-            </span>
-          )}
-        </div>
       </div>
-
       {open && hasChildren && (
-        <div>
+        <ul>
           {node.children.map((child) => (
             <Node key={child.id} node={child} depth={depth + 1} />
           ))}
-        </div>
+        </ul>
       )}
-    </div>
+    </li>
   )
 }
 
@@ -83,39 +66,42 @@ export default function OrgChartPage() {
   })(roots)
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <GitBranch className="w-6 h-6 text-brand-400" />
-          Org chart
-        </h1>
-        <p className="text-sm text-slate-400 mt-0.5">
-          {total} active employee{total === 1 ? '' : 's'} · built from the reporting line on each
-          employee record
-        </p>
-      </div>
+    <div className="ds">
+      <header className="ds-head">
+        <div>
+          <h1>Organization Chart</h1>
+          <p>({total}) active employee{total === 1 ? '' : 's'}</p>
+        </div>
+      </header>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
         </div>
       ) : roots.length === 0 ? (
-        <div className="card p-10 text-center">
-          <p className="text-sm text-slate-400">
-            No employees yet. Add employees and set a manager on each to build the chart.
+        <div className="card oc-empty">
+          No Employees Added
+          <p className="text-sm mt-3" style={{ color: 'var(--ds-muted)' }}>
+            Add employees and set a manager on each to build the chart.
           </p>
         </div>
       ) : (
-        <div className="card p-4">
+        <>
           {roots.length > 1 && (
-            <p className="text-[11px] text-slate-500 mb-3">
-              {roots.length} employees have no manager set — they appear as separate roots.
+            <p className="text-xs text-slate-500 mb-3">
+              {roots.length} employees have no manager set. They appear side by side at the top.
             </p>
           )}
-          {roots.map((node) => (
-            <Node key={node.id} node={node} depth={0} />
-          ))}
-        </div>
+          <div className="oc-scroll">
+            <div className="oc-forest">
+              {roots.map((node) => (
+                <ul key={node.id} className="oc-tree">
+                  <Node node={node} depth={0} />
+                </ul>
+              ))}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )

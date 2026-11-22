@@ -316,7 +316,9 @@ class LoanApprovalWorkflowTests(TestCase):
 
     def test_another_manager_can_approve_it(self):
         """Self-approval is blocked, not manager approval generally."""
-        other_mgr, other_mgr_client = _add_member(self.org, "loanflow_mgr2@example.com", "manager")
+        other_mgr, other_mgr_client = _add_member(
+            self.org, "loanflow_mgr2@example.com", "manager"
+        )
         _grant_hr(self.org, other_mgr)
         loan = self._make_pending_loan(self.mgr_employee)
         res = other_mgr_client.post(f"/api/v1/payroll/loans/{loan.id}/approve/", {}, format="json")

@@ -5,6 +5,7 @@
  */
 import { useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
+import AudityLogo from '@/components/AudityLogo'
 import type { ReactNode } from 'react'
 
 const DOCS = [
@@ -25,7 +26,7 @@ export default function LegalShell({ title, children }: { title: string; childre
           >
             <ArrowLeft size={16} /> Back
           </button>
-          <img src="/audity-logo-dark.svg" alt="Audity" className="h-6 w-auto ml-auto opacity-90" />
+          <AudityLogo className="h-6 ml-auto opacity-90" />
         </div>
       </header>
 

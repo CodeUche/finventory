@@ -39,7 +39,7 @@ function getExpiryStatus(batch: BatchItem): { label: string; badge: string; days
   if (!batch.expiry_date) return { label: 'No expiry', badge: 'badge-slate', daysLeft: null }
   const days = batch.days_to_expiry ?? Math.floor((new Date(batch.expiry_date).getTime() - Date.now()) / 86400000)
   if (days < 0) return { label: 'Expired', badge: 'badge-red', daysLeft: days }
-  if (days < 30) return { label: `Expiring (${days}d)`, badge: 'badge-orange', daysLeft: days }
+  if (days < 30) return { label: `Expiring (${days}d)`, badge: 'badge-yellow', daysLeft: days }
   return { label: 'OK', badge: 'badge-green', daysLeft: days }
 }
 
@@ -168,7 +168,7 @@ export default function BatchesPage() {
       {/* Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-5"><p className="text-xs text-slate-400">Total Batches</p><p className="text-xl font-bold text-white mt-1">{batches.length}</p></div>
-        <div className="card p-5 border-orange-500/20"><p className="text-xs text-slate-400">Expiring Soon</p><p className="text-xl font-bold text-orange-400 mt-1">{expiring}</p></div>
+        <div className={`card p-5 ${expiring > 0 ? 'border-amber-500/20' : ''}`}><p className="text-xs text-slate-400">Expiring Soon</p><p className={`text-xl font-bold mt-1 ${expiring > 0 ? 'text-amber-400' : 'text-white'}`}>{expiring}</p></div>
         <div className="card p-5 border-red-500/20"><p className="text-xs text-slate-400">Expired</p><p className="text-xl font-bold text-red-400 mt-1">{expired}</p></div>
         <div className="card p-5 border-emerald-500/20"><p className="text-xs text-slate-400">Adequate Stock</p><p className="text-xl font-bold text-emerald-400 mt-1">{adequate}</p></div>
       </div>

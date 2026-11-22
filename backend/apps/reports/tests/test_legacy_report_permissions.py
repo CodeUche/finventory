@@ -70,13 +70,17 @@ class LegacyRouteAccessTests(TestCase):
 
     def test_reports_only_member_is_refused_every_gated_route(self):
         for role in ("staff", "manager", "accountant"):
-            _, client, _ = _tick_member(self.org, f"lg_ro_{role}@example.com", role, ["reports"])
+            _, client, _ = _tick_member(
+                self.org, f"lg_ro_{role}@example.com", role, ["reports"]
+            )
             for route in GATED_ROUTES:
                 with self.subTest(role=role, route=route):
                     self.assertEqual(_get(client, route).status_code, 403)
 
     def test_reports_only_member_still_gets_the_reports_content(self):
-        _, client, _ = _tick_member(self.org, "lg_ro_ok@example.com", "staff", ["reports"])
+        _, client, _ = _tick_member(
+            self.org, "lg_ro_ok@example.com", "staff", ["reports"]
+        )
         for route in REPORTS_ROUTES:
             with self.subTest(route=route):
                 self.assertEqual(_get(client, route).status_code, 200)
@@ -98,7 +102,11 @@ class LegacyRouteAccessTests(TestCase):
 
     def test_wrong_module_tick_is_refused(self):
         _, client, _ = _tick_member(
-            self.org, "lg_wrong@example.com", "accountant", ["reports", "quotes", "budget"])
+            self.org,
+            "lg_wrong@example.com",
+            "accountant",
+            ["reports", "quotes", "budget"],
+        )
         for route in GATED_ROUTES:
             with self.subTest(route=route):
                 self.assertEqual(_get(client, route).status_code, 403)
@@ -107,7 +115,9 @@ class LegacyRouteAccessTests(TestCase):
         n = 0
         for route, (module, role, _) in GATED_ROUTES.items():
             n += 1
-            _, client, _ = _tick_member(self.org, f"lg_nr_{n}@example.com", role, [module], "edit")
+            _, client, _ = _tick_member(
+                self.org, f"lg_nr_{n}@example.com", role, [module], "edit"
+            )
             with self.subTest(route=route):
                 self.assertEqual(_get(client, route).status_code, 403)
 
@@ -115,7 +125,12 @@ class LegacyRouteAccessTests(TestCase):
         for n, route in enumerate(("account-statement", "vat-summary")):
             module = GATED_ROUTES[route][0]
             _, client, _ = _tick_member(
-                self.org, f"lg_role_{n}@example.com", "staff", ["reports", module], "edit")
+                self.org,
+                f"lg_role_{n}@example.com",
+                "staff",
+                ["reports", module],
+                "edit",
+            )
             with self.subTest(route=route):
                 self.assertEqual(_get(client, route).status_code, 403)
 
@@ -129,23 +144,33 @@ class LegacyRouteAccessTests(TestCase):
 
     def test_owner_and_admin_reach_every_legacy_route(self):
         _, admin, _ = _member(self.org, "lg_admin2@example.com", "admin")
-        for who, client in (("owner", _auth_client(self.owner, self.org)), ("admin", admin)):
+        for who, client in (
+            ("owner", _auth_client(self.owner, self.org)),
+            ("admin", admin),
+        ):
             for route in list(GATED_ROUTES) + REPORTS_ROUTES:
                 with self.subTest(who=who, route=route):
                     self.assertNotEqual(_get(client, route).status_code, 403)
 
     def test_excel_and_pdf_exports_of_a_forbidden_legacy_route_are_refused(self):
-        _, client, _ = _tick_member(self.org, "lg_fmt@example.com", "staff", ["reports"])
+        _, client, _ = _tick_member(
+            self.org, "lg_fmt@example.com", "staff", ["reports"]
+        )
         for fmt in ("excel", "pdf"):
             with self.subTest(fmt=fmt):
-                self.assertEqual(_get(client, "customer-details", format=fmt).status_code, 403)
+                self.assertEqual(
+                    _get(client, "customer-details", format=fmt).status_code, 403
+                )
                 self.assertEqual(_get(client, "pnl", format=fmt).status_code, 200)
 
     def test_customer_master_does_not_leak_in_the_refusal(self):
         from apps.customers.models import Customer
         Customer.objects.create(
-            organisation=self.org, name="Secret Buyer Ltd", email="secret@buyer.example")
-        _, client, _ = _tick_member(self.org, "lg_leak@example.com", "staff", ["reports"])
+            organisation=self.org, name="Secret Buyer Ltd", email="secret@buyer.example"
+        )
+        _, client, _ = _tick_member(
+            self.org, "lg_leak@example.com", "staff", ["reports"]
+        )
         for route in ("customer-details", "customer-balance"):
             body = _get(client, route).content.decode()
             self.assertNotIn("Secret Buyer", body)
@@ -155,7 +180,8 @@ class LegacyRouteAccessTests(TestCase):
         other_owner = _make_user("lg_other@example.com")
         other_org = _make_org(other_owner, "Other Legacy Org")
         _, client, _ = _tick_member(
-            other_org, "lg_cross@example.com", "staff", ["reports", "customers"], "edit")
+            other_org, "lg_cross@example.com", "staff", ["reports", "customers"], "edit"
+        )
         client.credentials(
             HTTP_AUTHORIZATION=client._credentials["HTTP_AUTHORIZATION"],
             HTTP_X_ORGANISATION_ID=str(self.org.id),
@@ -174,7 +200,9 @@ class LowRolesAndInactiveMembershipTests(TestCase):
                 self.org, f"lr_{role}@example.com", role,
                 ["reports", "payroll", "accounting", "customers", "sales"], "edit")
             with self.subTest(role=role, what="catalog"):
-                self.assertEqual(client.get("/api/v1/reports/catalog/").status_code, 403)
+                self.assertEqual(
+                    client.get("/api/v1/reports/catalog/").status_code, 403
+                )
             for key in ("profit-loss", "employee-list", "trial-balance"):
                 with self.subTest(role=role, key=key):
                     self.assertEqual(_run(client, key).status_code, 403)
@@ -184,7 +212,8 @@ class LowRolesAndInactiveMembershipTests(TestCase):
 
     def test_inactive_membership_is_refused(self):
         _, client, membership = _tick_member(
-            self.org, "lr_inactive@example.com", "staff", ["reports", "payroll"], "edit")
+            self.org, "lr_inactive@example.com", "staff", ["reports", "payroll"], "edit"
+        )
         self.assertEqual(_run(client, "employee-list").status_code, 200)
         Membership.objects.filter(pk=membership.pk).update(is_active=False)
         self.assertEqual(_run(client, "employee-list").status_code, 403)
@@ -195,7 +224,11 @@ class LowRolesAndInactiveMembershipTests(TestCase):
 class PlanGateTests(TestCase):
     """Accounting, payroll and bills reports honour the plan for non-admins."""
 
-    KEYS = {"accounting": "trial-balance", "payroll": "employee-list", "bills": "pay-bills"}
+    KEYS = {
+        "accounting": "trial-balance",
+        "payroll": "employee-list",
+        "bills": "pay-bills",
+    }
 
     def setUp(self):
         self.owner = _make_user("pgx_owner@example.com")
@@ -257,7 +290,9 @@ class RouteDeclarationMetaTests(TestCase):
                 self.assertIn(cls.module, valid, f"{cls.__name__} declares no module")
 
     def test_reports_only_views_are_exactly_the_allowlist(self):
-        reports_owned = {c.__name__ for c in self._subclasses() if c.module == "reports"}
+        reports_owned = {
+            c.__name__ for c in self._subclasses() if c.module == "reports"
+        }
         self.assertEqual(reports_owned, REPORTS_VIEW_CLASSES)
 
     def test_gated_routes_table_matches_the_views(self):
@@ -286,7 +321,9 @@ class RouteDeclarationMetaTests(TestCase):
     def test_a_view_with_no_declared_module_is_refused_even_for_an_owner(self):
         # A stand-in view (not a real subclass, so it cannot leak into the other
         # meta tests) that forgot to declare what it shows.
-        undeclared = types.SimpleNamespace(module=None, also_modules=(), owner_admin_only=False)
+        undeclared = types.SimpleNamespace(
+            module=None, also_modules=(), owner_admin_only=False
+        )
         owner = _make_user("meta_owner@example.com")
         req = APIRequestFactory().get("/")
         req.user = owner
@@ -300,10 +337,14 @@ class RouteDeclarationMetaTests(TestCase):
     def test_stock_valuation_refused_for_a_member_with_the_inventory_tick(self):
         owner = _make_user("sv_owner@example.com")
         org = _make_org(owner, "Valuation Org")
-        _, client, _ = _tick_member(org, "sv_inv@example.com", "manager", ["reports", "inventory"], "edit")
+        _, client, _ = _tick_member(
+            org, "sv_inv@example.com", "manager", ["reports", "inventory"], "edit"
+        )
         self.assertEqual(_run(client, "stock-valuation").status_code, 403)
         self.assertEqual(_run(client, "stock-report").status_code, 200)
-        self.assertEqual(_run(_auth_client(owner, org), "stock-valuation").status_code, 200)
+        self.assertEqual(
+            _run(_auth_client(owner, org), "stock-valuation").status_code, 200
+        )
 
 
 class CatalogQueryBudgetTests(TestCase):
@@ -380,13 +421,28 @@ class BulkEmailToTests(TestCase):
                     self.assertIn("email", res.json()["error"].lower())
             res = self.client.post(
                 "/api/v1/reports/export-bulk/",
-                {"keys": ["profit-loss"], "period": "all", "email_to": ["a@example.com"]},
-                format="json")
+                {
+                    "keys": ["profit-loss"],
+                    "period": "all",
+                    "email_to": ["a@example.com"],
+                },
+                format="json",
+            )
             self.assertEqual(res.status_code, 400)
             sender.assert_not_called()
 
     def test_a_valid_address_reaches_the_sender_trimmed(self):
-        def fake(self_view, request, org, email_to, filename, content_type, file_bytes, skipped):
+
+        def fake(
+            self_view,
+            request,
+            org,
+            email_to,
+            filename,
+            content_type,
+            file_bytes,
+            skipped,
+        ):
             return Response({"message": "sent", "to": email_to})
 
         with mock.patch.object(ReportBulkExportView, "_email_file", fake):

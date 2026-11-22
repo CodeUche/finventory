@@ -1,3 +1,4 @@
+import DateInput from '@/components/DateInput'
 import { useEffect, useState } from 'react'
 import { X, Loader2, CheckCircle2, AlertTriangle, Banknote, ClipboardCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -34,7 +35,7 @@ const REASON_LABELS: Record<string, string> = {
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  initiated: 'badge-slate', in_progress: 'badge-orange',
+  initiated: 'badge-slate', in_progress: 'badge-yellow',
   completed: 'badge-green', cancelled: 'badge-slate',
 }
 
@@ -161,7 +162,7 @@ export default function OffboardingDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+    <div data-drawer="open" className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
       <div
         className="w-full max-w-lg h-full bg-surface-900 border-l border-surface-700 overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
@@ -187,10 +188,10 @@ export default function OffboardingDrawer({
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Last working day</label>
-              <input
-                type="date" className="input"
+              <DateInput
+                className="w-full"
                 value={newCase.last_working_day}
-                onChange={(e) => setNewCase({ ...newCase, last_working_day: e.target.value })}
+                onChange={(iso) => setNewCase({ ...newCase, last_working_day: iso })}
               />
             </div>
             <div>

@@ -108,7 +108,7 @@ export default function EditableTotal({ total, lines, onApply, valueClass = 'tex
           </button>
         </div>
       </div>
-      <p className="text-[11px] font-normal text-slate-500 text-right">
+      <p className="text-xs font-normal text-slate-500 text-right">
         Unit prices will be adjusted proportionally (quantities &amp; discounts stay unchanged).
       </p>
     </div>

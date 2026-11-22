@@ -45,6 +45,123 @@ from .serializers import (
 )
 from .services import SaleService
 
+import uuid as _uuid
+from apps.accounting.exceptions import GLAccountNotConfigured, PeriodLockedError
+
+
+def _user_facing(exc) -> bool:
+    """Exceptions whose text is written for the person using the screen."""
+    return isinstance(exc, (ValueError, DjangoValidationError, PermissionDenied,
+                            PeriodLockedError, GLAccountNotConfigured))
+
+
+def _error_response(exc, what, status_code=422):
+    """The person's own mistake (a refusal we wrote) is explained; anything else
+    gets a generic line and an id to quote, with the detail kept in the log."""
+    if _user_facing(exc):
+        msg = "; ".join(exc.messages) if isinstance(exc, DjangoValidationError) else str(exc)
+        return Response({"error": msg}, status=status_code)
+    error_id = _uuid.uuid4().hex[:10]
+    logger.error("[%s] could not %s: %s", error_id, what, exc, exc_info=exc)
+    return Response(
+        {"error": f"Could not {what}. Please try again; if it keeps happening quote reference {error_id}.",
+         "error_id": error_id},
+        status=status_code,
+    )
+
+
+_FIELD_LABELS = {
+    "unit_price": "unit price", "quantity": "quantity", "discount_percent": "discount",
+    "tax_rate": "tax rate", "product_id": "product", "warehouse_id": "warehouse",
+    "customer_id": "customer", "payment_method": "payment method", "amount_paid": "amount paid",
+    "shipping_amount": "delivery charge", "adjustment_amount": "adjustment", "due_date": "due date",
+    "issue_date": "issue date", "items": "items",
+}
+
+
+def _plain_detail(field, detail):
+    """One DRF validation error in plain words (codes first, then DRF's own text)."""
+    code = getattr(detail, "code", "")
+    label = _FIELD_LABELS.get(field, str(field).replace("_", " "))
+    if field == "unit_price" and code == "min_value":
+        return "The unit price cannot be negative."
+    if field == "quantity" and code in ("min_value", "invalid"):
+        return "The quantity must be greater than zero."
+    if field in ("discount_percent", "tax_rate") and code in ("min_value", "max_value"):
+        return f"The {label} must be between 0 and 100."
+    if code in ("required", "null"):
+        return f"The {label} is required."
+    text = str(detail).replace(chr(39), "")
+    if code in ("invalid", "does_not_exist") and text.lower().startswith(("a valid", "not a valid", "enter a valid", "must be a valid", "invalid pk", "\"")):
+        return f"The {label} is not valid."
+    return f"{label.capitalize()}: {str(detail).replace(chr(39), '')}"
+
+
+def _plain_validation_errors(errors, field="", line=None):
+    """Flatten DRF serializer errors (nested dicts / per-line lists) into plain
+    sentences; the line number is added when a sale has several lines."""
+    out = []
+    if isinstance(errors, dict):
+        for key, val in errors.items():
+            out += _plain_validation_errors(val, key, line)
+    elif isinstance(errors, list):
+        if errors and all(isinstance(e, (dict, list)) for e in errors if e) and field in ("items", ""):
+            for idx, e in enumerate(errors, start=1):
+                if e:
+                    out += _plain_validation_errors(e, field, idx if len(errors) > 1 else None)
+        else:
+            for e in errors:
+                if isinstance(e, (dict, list)):
+                    out += _plain_validation_errors(e, field, line)
+                else:
+                    msg = _plain_detail(field, e)
+                    out.append(f"Line {line}: {msg}" if line else msg)
+    else:
+        msg = _plain_detail(field, errors)
+        out.append(f"Line {line}: {msg}" if line else msg)
+    return out
+
+
+def _create_audit_changes(invoice):
+    """What the audit log records when an invoice is raised: the number plus every
+    discretionary money decision (adjustment, discounts, price overrides)."""
+    changes = {"invoice_number": {"old": None, "new": invoice.invoice_number}}
+    if invoice.adjustment_amount:
+        changes["adjustment_amount"] = {"old": None, "new": str(invoice.adjustment_amount)}
+    if invoice.discount_amount:
+        changes["discount_amount"] = {"old": None, "new": str(invoice.discount_amount)}
+    if invoice.shipping_amount:
+        changes["shipping_amount"] = {"old": None, "new": str(invoice.shipping_amount)}
+    overrides, discounts = [], []
+    for it in invoice.items.select_related("product"):
+        if not it.modifiers and it.unit_price != it.product.selling_price:
+            overrides.append({"product": it.product.name, "sku": it.product.sku,
+                              "list_price": str(it.product.selling_price),
+                              "unit_price": str(it.unit_price), "quantity": str(it.quantity)})
+        if it.discount_percent:
+            discounts.append({"product": it.product.name, "sku": it.product.sku,
+                              "discount_percent": str(it.discount_percent),
+                              "discount_amount": str(it.discount_amount)})
+    if overrides:
+        changes["price_overrides"] = {"old": None, "new": overrides}
+    if discounts:
+        changes["line_discounts"] = {"old": None, "new": discounts}
+    return changes
+
+
+def _within_daily_email_cap(org) -> bool:
+    """Per-organisation daily cap on invoice e-mails (INVOICE_EMAIL_DAILY_CAP_PER_ORG,
+    default 200). Counts attempts in the shared cache; fails open if the cache is down."""
+    from django.conf import settings
+    from django.core.cache import cache
+    cap = int(getattr(settings, "INVOICE_EMAIL_DAILY_CAP_PER_ORG", 200))
+    key = f"invoice-email-cap:{org.id}:{timezone.localdate().isoformat()}"
+    try:
+        cache.add(key, 0, 60 * 60 * 25)
+        return cache.incr(key) <= cap
+    except Exception:
+        return True
+
 
 class InvoiceFilter(django_filters.FilterSet):
     status = django_filters.ChoiceFilter(choices=Invoice.Status.choices)
@@ -63,13 +180,13 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     export_filename = 'invoices'
     export_fields = [
         ('Invoice #', 'invoice_number'),
-        ('Date', 'invoice_date'),
+        ('Date', 'issue_date'),
         ('Due Date', 'due_date'),
         ('Customer', lambda o: o.customer.name if o.customer else 'Walk-in'),
         ('Status', 'status'),
         ('Subtotal', 'subtotal'),
         ('Tax', 'tax_amount'),
-        ('Total', 'total'),
+        ('Total', 'total_amount'),
         ('Amount Due', 'amount_due'),
         ('Payment Method', 'payment_method'),
     ]
@@ -98,7 +215,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         # Auto-mark overdue invoices on every list fetch
         try:
             from django.utils import timezone as tz
-            today = tz.now().date()
+            today = tz.localdate()
             Invoice.objects.filter(
                 organisation=org,
                 due_date__lt=today,
@@ -112,9 +229,19 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
     def create(self, request, *args, **kwargs):
         """Create a confirmed sale invoice."""
-        cached, idem_key = self.check_idempotency(request, 'invoice:create')
+        cached, idem_key = self.check_idempotency(request, 'invoice:create', claim=True)
         if cached is not None:
             return cached
+        try:
+            resp = self._create_inner(request, idem_key)
+        except BaseException:
+            self.release_idempotency(idem_key, request.user.id)
+            raise
+        if resp.status_code != status.HTTP_201_CREATED:
+            self.release_idempotency(idem_key, request.user.id)
+        return resp
+
+    def _create_inner(self, request, idem_key):
 
         # ── Plan limit check (atomic to prevent race-condition bypass) ────────
         # Guarded end-to-end: a bug or transient DB error in the limit check itself
@@ -144,17 +271,8 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
         serializer = CreateSaleSerializer(data=request.data)
         if not serializer.is_valid():
-            # Flatten DRF validation errors into a single readable string
-            errors = serializer.errors
-            messages = []
-            for field, errs in errors.items():
-                if isinstance(errs, list):
-                    messages.append(f"{field}: {'; '.join(str(e) for e in errs)}")
-                elif isinstance(errs, dict):
-                    for sub, sub_errs in errs.items():
-                        messages.append(f"{field}.{sub}: {'; '.join(str(e) for e in sub_errs)}")
-                else:
-                    messages.append(str(errs))
+            # Plain words, one sentence per problem
+            messages = _plain_validation_errors(serializer.errors)
             return Response({"error": " | ".join(messages)}, status=400)
 
         d = serializer.validated_data
@@ -201,6 +319,13 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 wht_rate_id=d.get("wht_rate_id"),
                 defer_fulfillment=d.get("defer_fulfillment", False),
                 shipping_amount=d.get("shipping_amount"),
+                adjustment_amount=d.get("adjustment_amount"),
+                # A walk-in sale (no customer) must always be paid in full: there is
+                # nobody to chase for the rest. Only a manager or above may record one
+                # as unpaid, and only by saying so (allow_unpaid_walk_in).
+                strict_walk_in=not (d.get("allow_unpaid_walk_in") and can_override),
+                put_balance_on_customer=True,
+                charge_delivery_vat=True,
             )
             try:
                 from apps.core.models import AuditLog as _AL
@@ -211,7 +336,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                     model_name='Invoice',
                     object_id=str(invoice.id),
                     object_repr=str(invoice),
-                    changes={'invoice_number': {'old': None, 'new': invoice.invoice_number}},
+                    changes=_create_audit_changes(invoice),
                     request=request,
                 )
             except Exception:
@@ -232,10 +357,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             msg = "; ".join(e.messages) if isinstance(e, DjangoValidationError) else str(e)
             return Response({"error": msg}, status=422)
         except Exception as e:
-            logger.exception("Unexpected error creating sale")
-            return Response(
-                {"error": f"Could not complete sale: {type(e).__name__}: {e}"}, status=422
-            )
+            return _error_response(e, "complete the sale")
 
     def _check_invoice_edit_permission(self, request):
         """
@@ -347,6 +469,12 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         items = request.data.get("items")
         if not items or not isinstance(items, list) or len(items) == 0:
             return Response({"error": "At least one line item is required."}, status=422)
+        # the same bounds as a new sale: quantity > 0, discount 0-100, tax rate >= 0, <= 200 lines
+        item_ser = CreateSaleSerializer.ItemInputSerializer(data=items, many=True, min_length=1, max_length=200)
+        if not item_ser.is_valid():
+            flat = _plain_validation_errors(item_ser.errors, "items")
+            return Response({"error": " | ".join(flat) or "Invalid line items."}, status=422)
+        items = item_ser.validated_data
 
         # Resolve optional foreign keys
         customer = None
@@ -389,9 +517,8 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 payment_method=request.data.get("payment_method"),
                 shipping_amount=request.data.get("shipping_amount"),
             )
-        except (ValueError, Exception) as exc:
-            logger.error("[edit_lines] %s – %s", type(exc).__name__, exc)
-            return Response({"error": f"[{type(exc).__name__}] {exc}"}, status=422)
+        except Exception as exc:
+            return _error_response(exc, "update this invoice")
 
         serializer = self.get_serializer(updated)
         return Response(serializer.data)
@@ -425,10 +552,19 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     @action(detail=True, methods=["post"])
     def pay(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/pay/ — Record a payment."""
-        cached, idem_key = self.check_idempotency(request, f'invoice:pay:{pk}')
+        cached, idem_key = self.check_idempotency(request, f'invoice:pay:{pk}', claim=True)
         if cached is not None:
             return cached
+        try:
+            resp = self._pay_inner(request, pk, idem_key)
+        except BaseException:
+            self.release_idempotency(idem_key, request.user.id)
+            raise
+        if resp.status_code != 201:
+            self.release_idempotency(idem_key, request.user.id)
+        return resp
 
+    def _pay_inner(self, request, pk, idem_key):
         invoice = self.get_object()
         serializer = RecordPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -445,10 +581,14 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             resp = Response(SalePaymentSerializer(payment).data, status=201)
             self.save_idempotency(idem_key, request.user.id, resp)
             return resp
-        except ValueError as e:
-            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            return _error_response(e, "record this payment")
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def pay_split(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/pay_split/ — record multiple tenders
         (split payment: e.g. part cash + part transfer) in one call."""
@@ -456,22 +596,28 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         tenders = request.data.get("tenders") or request.data.get("payments") or []
         try:
             payments = SaleService.record_split_payment(invoice, tenders, received_by=request.user)
-        except ValueError as e:
-            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            return _error_response(e, "record these payments")
         invoice.refresh_from_db()
         return Response({
             "payments": SalePaymentSerializer(payments, many=True).data,
             "invoice": InvoiceSerializer(invoice).data,
         }, status=201)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def void(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/void/
 
         Destructive (reverses the GL entry), so it needs 'edit' level on the
         sales tick, not just 'write' (POST alone counts as create).
         """
-        if not (request.user.is_superuser or self._check_invoice_edit_permission(request)):
+        if not (
+            request.user.is_superuser or self._check_invoice_edit_permission(request)
+        ):
             return Response(
                 {"error": "Voiding an invoice needs full edit access to Sales. "
                           "Ask an owner or admin."},
@@ -481,10 +627,14 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         try:
             invoice = SaleService.void_invoice(invoice, voided_by=request.user)
             return Response(InvoiceSerializer(invoice).data)
-        except ValueError as e:
-            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            return _error_response(e, "void this invoice")
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def process_return(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/process_return/ — Create a sales return."""
         invoice = self.get_object()
@@ -510,69 +660,37 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": str(e)}, status=422)
         except Exception as e:
             logger.exception("Unexpected error processing return")
-            return Response(
-                {"error": f"Could not process this return: {type(e).__name__}: {e}"}, status=422
-            )
+            return _error_response(e, "process this return")
 
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def confirm_proforma(self, request, pk=None):
-        """POST /api/v1/sales/invoices/{id}/confirm_proforma/ — convert proforma to confirmed invoice."""
+        """POST /api/v1/sales/invoices/{id}/confirm_proforma/ — convert proforma to confirmed invoice.
+
+        Posts exactly what a new sale would (stock out unless fulfilment is
+        deferred, the sale journal, the customer's debt) in one transaction."""
         try:
-            from django.db import transaction as _tx
-            from apps.inventory.services import InventoryService
-            from apps.inventory.models import StockMovement
-            from apps.core.utils import round_money
-            with _tx.atomic():
-                # Re-read with row lock to prevent concurrent double-confirmation
-                invoice = Invoice.objects.select_for_update().get(
-                    pk=self.get_object().pk,
-                    organisation=request.organisation,
-                )
-                if invoice.status != Invoice.Status.PROFORMA:
-                    return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
-                for item in invoice.items.all():
-                    if item.product.product_type == "combo":
-                        cost_per_unit = InventoryService.consume_combo_components(
-                            organisation=invoice.organisation,
-                            combo_product=item.product,
-                            warehouse=invoice.warehouse,
-                            quantity=item.quantity,
-                            reference=invoice.invoice_number,
-                            created_by=request.user,
-                        )
-                        if item.quantity:
-                            item.cost_of_goods = round_money(item.quantity * cost_per_unit)
-                            item.save(update_fields=["cost_of_goods", "updated_at"])
-                    elif item.product.product_type != "service":
-                        movement = InventoryService.record_movement(
-                            organisation=invoice.organisation,
-                            product=item.product,
-                            warehouse=invoice.warehouse,
-                            movement_type=StockMovement.MovementType.SALE_OUT,
-                            quantity=-item.quantity,
-                            unit_cost=item.cost_of_goods / item.quantity if item.quantity else item.product.cost_price,
-                            reference=invoice.invoice_number,
-                            created_by=request.user,
-                            batch=item.batch,
-                            use_costing_engine=True,
-                        )
-                        # Confirming is where a proforma's stock actually leaves,
-                        # so restate the provisional cost from what the ledger
-                        # consumed — the GL posts off cost_of_goods later.
-                        if item.quantity:
-                            item.cost_of_goods = round_money(item.quantity * movement.unit_cost)
-                            item.save(update_fields=["cost_of_goods", "updated_at"])
-                invoice.status = Invoice.Status.CONFIRMED
-                invoice.save(update_fields=["status"])
+            can_override = request.user.is_superuser or has_minimum_role(
+                request.user, request.organisation, "manager")
+            invoice = SaleService.confirm_proforma(
+                self.get_object(), actor=request.user,
+                allow_unpaid_walk_in=bool(request.data.get("allow_unpaid_walk_in")) and can_override,
+            )
             return Response(InvoiceSerializer(invoice).data)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
         except Exception as e:
             logger.exception("Error confirming proforma")
-            return Response(
-                {"error": f"Could not confirm this proforma: {type(e).__name__}: {e}"}, status=422
-            )
+            return _error_response(e, "confirm this proforma")
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def fulfill(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/fulfill/ — deduct stock + post GL for a deferred invoice."""
         invoice = self.get_object()
@@ -583,9 +701,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": str(e)}, status=422)
         except Exception as e:
             logger.exception("Error fulfilling invoice")
-            return Response(
-                {"error": f"Could not fulfil this invoice: {type(e).__name__}: {e}"}, status=422
-            )
+            return _error_response(e, "fulfil this invoice")
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
     def delete_invoice(self, request, pk=None):
@@ -605,18 +721,34 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": str(e)}, status=422)
         except Exception as e:
             logger.exception("Error deleting invoice")
-            return Response(
-                {"error": f"Could not delete this invoice: {type(e).__name__}: {e}"}, status=422
-            )
+            return _error_response(e, "delete this invoice")
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def send_email(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/send_email/ — send invoice to customer by email."""
+        import re as _re
+        from django.core.validators import validate_email
         invoice = self.get_object()
-        requested_email = request.data.get("to_email", "").strip()
+        requested_email = request.data.get("to_email", "")
+        if not isinstance(requested_email, str):
+            return Response({"error": "Enter a single valid email address."}, status=422)
+        requested_email = requested_email.strip()
+        if requested_email:
+            try:
+                if _re.search(r"[\s,;<>]", requested_email):
+                    raise DjangoValidationError("bad")
+                validate_email(requested_email)
+            except DjangoValidationError:
+                return Response({"error": "Enter a single valid email address."}, status=422)
 
-        # Only owners/admins may override the customer email address
-        if requested_email and invoice.customer and requested_email != invoice.customer.email:
+        # Only owners/admins may send to an address other than the customer's own --
+        # including a walk-in invoice, which has no customer address at all.
+        customer_email = (invoice.customer.email if invoice.customer else "") or ""
+        if requested_email and requested_email.lower() != customer_email.lower():
             from apps.core.permissions import has_minimum_role
             if not has_minimum_role(request.user, request.organisation, "admin"):
                 return Response(
@@ -624,9 +756,24 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                     status=403,
                 )
 
-        to_email = requested_email or (invoice.customer and invoice.customer.email)
+        to_email = requested_email or customer_email
         if not to_email:
             return Response({"error": "No recipient email address provided"}, status=422)
+
+        # The attachment: a real PDF, at most 5 MB once decoded.
+        validated_pdf_b64 = None
+        raw_pdf = request.data.get("pdf_base64")
+        if raw_pdf:
+            import base64 as _b64
+            try:
+                if not isinstance(raw_pdf, str) or len(raw_pdf) > 7_200_000:
+                    raise ValueError("too large")
+                pdf_raw = _b64.b64decode(raw_pdf, validate=True)
+                if len(pdf_raw) > 5 * 1024 * 1024 or not pdf_raw.startswith(b"%PDF-"):
+                    raise ValueError("not a pdf")
+            except Exception:
+                return Response({"error": "The attachment must be a PDF of at most 5 MB."}, status=422)
+            validated_pdf_b64 = raw_pdf
 
         # Get org SMTP config
         try:
@@ -636,14 +783,23 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         except Exception:
             return Response({"error": "Email is not configured. Go to Settings → Email."}, status=422)
 
+        if not _within_daily_email_cap(request.organisation):
+            return Response(
+                {"error": "The daily limit of invoice emails for this business has been reached. Try again tomorrow."},
+                status=429,
+            )
+
         try:
             import smtplib
             from email.mime.multipart import MIMEMultipart
             from email.mime.text import MIMEText
             from django.utils.html import escape as _esc
 
-            from_name  = email_cfg.from_name or request.organisation.name
-            from_email = email_cfg.from_email or email_cfg.smtp_username
+            def _one_line(v):
+                return _re.sub(r"[\r\n]+", " ", str(v or "")).strip()
+
+            from_name  = _one_line(email_cfg.from_name or request.organisation.name)
+            from_email = _one_line(email_cfg.from_email or email_cfg.smtp_username)
 
             items_html = "".join(
                 f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee'>{_esc(i.product.name)}</td>"
@@ -692,7 +848,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             msg.attach(alt)
 
             # Attach PDF if provided
-            pdf_base64 = request.data.get("pdf_base64")
+            pdf_base64 = validated_pdf_b64
             if pdf_base64:
                 import base64
                 from email.mime.base import MIMEBase
@@ -750,18 +906,22 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         except smtplib.SMTPAuthenticationError:
             return Response({"error": "SMTP authentication failed. Check your username and password in Settings → Email."}, status=422)
         except smtplib.SMTPConnectError as e:
-            return Response({"error": f"Could not connect to SMTP server ({email_cfg.smtp_host}:{email_cfg.smtp_port}). Check host and port settings."}, status=422)
+            return Response({"error": "Could not connect to the email server. Check the host and port in Settings → Email."}, status=422)
         except OSError as e:
             err_str = str(e)
             if '10054' in err_str or 'forcibly closed' in err_str.lower():
                 return Response({"error": "SMTP connection was reset by the server. Try switching between STARTTLS (port 587) and SSL (port 465) in Settings → Email."}, status=422)
-            return Response({"error": f"Network error sending email: {err_str}"}, status=422)
+            logger.warning("Invoice email network error: %s", err_str)
+            return Response({"error": "Network error while sending the email. Try again, or check the email settings."}, status=422)
         except Exception:
             logger.exception("Email send failed")
             return Response({"error": "Failed to send email. Please check your SMTP settings."}, status=422)
 
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
+    )
     def extend_due_date(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/extend_due_date/
         Body: { new_due_date: "YYYY-MM-DD", reason: "optional note" }
@@ -776,7 +936,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             parsed = date.fromisoformat(new_due_date)
         except ValueError:
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=422)
-        if parsed <= date.today():
+        if parsed <= timezone.localdate():
             return Response({"error": "New due date must be in the future."}, status=422)
 
         old_date = invoice.due_date
@@ -819,7 +979,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": "Owner or admin access required"}, status=403)
 
         period = request.query_params.get("period", "month")
-        today = timezone.now().date()
+        today = timezone.localdate()
         if period == "today":
             date_from = today
         elif period == "week":
@@ -917,7 +1077,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         org = self._get_organisation()
         period = request.query_params.get("period", "month")
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         if period == "today":
             date_from = today
         elif period == "week":
@@ -1253,7 +1413,7 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     delta = relativedelta(years=1)
                 else:
                     delta = relativedelta(months=1)
-                ri.next_run_date = (ri.next_run_date or tz.now().date()) + delta
+                ri.next_run_date = (ri.next_run_date or tz.localdate()) + delta
                 if hasattr(ri, 'occurrences_count'):
                     ri.occurrences_count = (ri.occurrences_count or 0) + 1
                 ri.save()
@@ -1270,7 +1430,7 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'error': detail or 'Could not generate invoice'}, status=400)
         except Exception as e:
             logger.exception("generate_now failed")
-            return Response({'error': f"[{type(e).__name__}] {e}"}, status=400)
+            return _error_response(e, "generate this invoice", 400)
 
 
 
@@ -1295,7 +1455,7 @@ class LocationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         org = self._get_organisation()
         period = request.query_params.get("period", "month")
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         if period == "today":
             date_from = today
         elif period == "week":

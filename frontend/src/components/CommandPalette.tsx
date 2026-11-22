@@ -2,36 +2,51 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, ChevronRight } from 'lucide-react'
 import { navGroups } from '@/components/layout/Sidebar'
+import { useEscapeLayer } from '@/lib/escapeStack'
+import { useCanSeeNavItem } from '@/lib/navAccess'
 
 interface Cmd { name: string; href: string; group: string; icon: React.ElementType }
+
+// The old names people still type. The page was one of two (New Sale, New Invoice) before it was merged.
+const ALIASES: Record<string, string> = { '/sales/new': 'new sale new invoice invoice pos checkout' }
 
 /**
  * ⌘K / Ctrl+K command palette. Flattens the sidebar nav into a searchable,
  * keyboard-driven launcher — essential once the accountant-first nav gets deep.
  * Route guards still enforce access, so this stays a thin convenience layer.
  */
+import { canLeave } from '@/lib/leaveGuard'
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
+  // Same visibility rules as the sidebar, so the palette never lists pages the person cannot open
+  // (for example the Partner pages for a non-partner).
+  const { canSeeItem } = useCanSeeNavItem()
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
+  const shortcutHint = isMac ? '⌘K' : 'Ctrl+K'
 
   const commands = useMemo<Cmd[]>(() => {
     const out: Cmd[] = []
     for (const g of navGroups) {
       for (const it of g.items) {
+        if (!canSeeItem(it.module, it.ownerOnly, it.partnerOnly, it.businessType)) continue
         out.push({ name: it.name, href: it.href, group: g.label ?? 'General', icon: it.icon })
       }
     }
     return out
-  }, [])
+    // canSeeItem is rebuilt every render; the list only needs to change when who is signed in changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeItem])
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return commands.slice(0, 20)
     return commands
-      .filter((c) => c.name.toLowerCase().includes(q) || c.group.toLowerCase().includes(q))
+      .filter((c) => c.name.toLowerCase().includes(q) || c.group.toLowerCase().includes(q) || (ALIASES[c.href] ?? '').includes(q))
       .slice(0, 20)
   }, [query, commands])
 
@@ -41,13 +56,14 @@ export default function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setOpen((o) => !o)
-      } else if (e.key === 'Escape') {
-        setOpen(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Escape closes the palette (one app-wide Escape handler, newest layer first).
+  useEscapeLayer(open, () => setOpen(false))
 
   useEffect(() => {
     if (open) { setQuery(''); setActive(0); setTimeout(() => inputRef.current?.focus(), 30) }
@@ -56,7 +72,7 @@ export default function CommandPalette() {
 
   if (!open) return null
 
-  const go = (href: string) => { setOpen(false); navigate(href) }
+  const go = (href: string) => { setOpen(false); void canLeave().then((ok) => { if (ok) navigate(href) }) }
 
   const onListKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)) }
@@ -65,7 +81,7 @@ export default function CommandPalette() {
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] bg-black/60"
+    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm"
       onClick={() => setOpen(false)}>
       <div className="w-full max-w-lg mx-4 bg-surface-900 border border-surface-700 rounded-xl shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
@@ -76,7 +92,7 @@ export default function CommandPalette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onListKey}
-            placeholder="Search pages… (⌘K)"
+            placeholder={`Search pages… (${shortcutHint})`}
             className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           />
           <kbd className="text-[10px] text-slate-500 border border-surface-600 rounded px-1.5 py-0.5">ESC</kbd>

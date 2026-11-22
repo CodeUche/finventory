@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-When someone else signs in on the same computer or phone, they no longer see the previous person's saved data, name or menu. Saved business information on the device is now cleared when you sign out and is kept separately for each person. Anything you had not yet sent while offline stays safe for you and sends when you are back online. After this update, open the app once with a connection so your offline copy refills.
+Audity has a fresh look: new fonts and colours throughout, a reorganised menu and home pages, and a new combined "New sale & invoice" page where you add items once and then create an invoice or complete a sale. Totals, VAT, deposits and refunds are now recorded more accurately, a total adjustment box lets you add a discount or extra charge, and voiding or editing an invoice now keeps your books in step.

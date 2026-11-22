@@ -460,7 +460,7 @@ export default function EmployeesPage() {
   const loanPreview = calcLoanPreview(loanForm)
 
   const PENALTY_STATUS_COLOR: Record<string, string> = {
-    pending: 'badge-orange', applied: 'badge-green', waived: 'badge-slate',
+    pending: 'badge-yellow', applied: 'badge-green', waived: 'badge-slate',
   }
   const LOAN_STATUS_COLOR: Record<string, string> = {
     pending: 'badge-amber', active: 'badge-blue', settled: 'badge-green',
@@ -489,7 +489,7 @@ export default function EmployeesPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-5"><p className="text-xs text-slate-400">Total Employees</p><p className="text-xl font-bold text-white mt-1">{totalEmployees}</p></div>
         <div className="card p-5"><p className="text-xs text-slate-400">Active</p><p className="text-xl font-bold text-emerald-400 mt-1">{active}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">On Contract</p><p className="text-xl font-bold text-orange-400 mt-1">{contracted}</p></div>
+        <div className="card p-5"><p className="text-xs text-slate-400">On Contract</p><p className="text-xl font-bold text-white mt-1">{contracted}</p></div>
         <div className="card p-5"><p className="text-xs text-slate-400">Total Monthly Gross</p><p className="text-xl font-bold text-brand-400 mt-1">{formatCurrency(String(totalGross))}</p></div>
       </div>
 
@@ -547,7 +547,7 @@ export default function EmployeesPage() {
                           >
                             <LogOut size={14} />
                           </button>
-                          <button onClick={() => handleDeactivate(e)} className="text-xs px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">Deactivate</button>
+                          <button onClick={() => handleDeactivate(e)} className="text-xs px-1 py-1 bg-transparent text-red-400 hover:underline transition-colors">Deactivate</button>
                         </>
                       )}
                       <button onClick={() => handleDelete(e)} className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete employee permanently"><Trash2 size={14} /></button>

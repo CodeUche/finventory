@@ -731,10 +731,10 @@ export default function TaxPage() {
 
       {/* Professional plan partial-tax notice */}
       {proPlan && (
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/8 border border-amber-500/20">
-          <Star size={16} className="text-amber-400 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-brand-500/10 border border-brand-500/20">
+          <Star size={16} className="text-brand-400 shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-amber-300">Professional Plan — VAT &amp; Income Tax included</p>
+            <p className="text-sm font-medium text-brand-300">Professional Plan — VAT &amp; Income Tax included</p>
             <p className="text-xs text-slate-400 mt-0.5">
               Excise Duty, WHT, and the Filing Guide are exclusive to the{' '}
               <strong className="text-white">Business</strong> plan.
@@ -1071,11 +1071,11 @@ export default function TaxPage() {
       {tab === 'excise' && (
         <div className="space-y-4">
           {/* Info banner */}
-          <div className="flex gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
-            <AlertCircle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex gap-3 p-4 rounded-xl bg-brand-500/10 border border-brand-500/30">
+            <AlertCircle size={18} className="text-brand-400 shrink-0 mt-0.5" />
             <div className="text-sm">
-              <p className="text-amber-300 font-semibold">Nigeria Excise Duty (FIRS / Customs)</p>
-              <p className="text-amber-400/80 mt-0.5">
+              <p className="text-brand-300 font-semibold">Nigeria Excise Duty (FIRS / Customs)</p>
+              <p className="text-brand-400/80 mt-0.5">
                 Specific duties are calculated per Litre of Pure Alcohol (LPA = ABV% × Volume in litres).
                 Ad valorem duties are a percentage of the selling price.
                 Current rate for spirits: ₦158.70/LPA.
@@ -1381,7 +1381,7 @@ export default function TaxPage() {
                         <td className="px-4 py-3.5 text-slate-400 text-xs">{formatDate(v.period_start)}</td>
                         <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(v.net_amount)}</td>
                         <td className="px-4 py-3.5 font-mono">
-                          <span className={v.direction === 'output' ? 'text-amber-400' : 'text-emerald-400'}>{formatCurrency(v.vat_amount)}</span>
+                          <span className={v.direction === 'output' ? 'text-slate-200' : 'text-emerald-400'}>{formatCurrency(v.vat_amount)}</span>
                         </td>
                         <td className="px-4 py-3.5">
                           {v.is_claimable ? <CheckCircle size={14} className="text-emerald-400" /> : <X size={14} className="text-slate-500" />}
@@ -1573,7 +1573,7 @@ export default function TaxPage() {
                       <td className="px-4 py-3.5 text-slate-400 text-xs">{ca.asset_class_display}</td>
                       <td className="px-4 py-3.5 text-slate-300">{ca.tax_year}</td>
                       <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(ca.cost)}</td>
-                      <td className="px-4 py-3.5 font-mono text-amber-400">{formatCurrency(ca.initial_allowance)}<span className="text-xs text-slate-500 ml-1">({ca.initial_allowance_rate}%)</span></td>
+                      <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(ca.initial_allowance)}<span className="text-xs text-slate-500 ml-1">({ca.initial_allowance_rate}%)</span></td>
                       <td className="px-4 py-3.5 font-mono text-blue-400">{formatCurrency(ca.annual_allowance)}<span className="text-xs text-slate-500 ml-1">({ca.annual_allowance_rate}%)</span></td>
                       <td className="px-4 py-3.5 font-mono text-brand-400 font-semibold">{formatCurrency(ca.total_allowance)}</td>
                       <td className="px-4 py-3.5 font-mono text-slate-300">{formatCurrency(ca.closing_tax_written_down_value)}</td>
@@ -2471,8 +2471,8 @@ export default function TaxPage() {
           {proPlan && (
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl bg-surface-900/60 backdrop-blur-md">
               <div className="text-center max-w-sm px-6">
-                <div className="w-14 h-14 bg-amber-500/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Lock size={28} className="text-amber-400" />
+                <div className="w-14 h-14 bg-brand-500/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Lock size={28} className="text-brand-400" />
                 </div>
                 <p className="text-white font-bold text-lg">Business Plan Feature</p>
                 <p className="text-slate-400 text-sm mt-2">
@@ -2650,7 +2650,7 @@ export default function TaxPage() {
                 { step: '3', title: 'File & remit monthly', detail: 'By the 21st of each month: log into TaxPro MAX → File VAT Return → Enter output VAT (collected) minus input VAT (paid) → Pay net VAT via bank.' },
               ].map((item) => (
                 <div key={item.step} className="flex gap-3 p-3 bg-surface-900/50 rounded-xl border border-surface-700">
-                  <div className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold shrink-0">{item.step}</div>
+                  <div className="w-6 h-6 rounded-full bg-brand-500/20 text-brand-400 flex items-center justify-center text-xs font-bold shrink-0">{item.step}</div>
                   <div>
                     <p className="text-sm font-medium text-white">{item.title}</p>
                     <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{item.detail}</p>

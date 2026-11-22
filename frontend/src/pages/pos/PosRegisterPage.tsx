@@ -8,22 +8,24 @@
  * into. The fuller screen at /sales/new stays for owners raising an invoice.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, Banknote, CreditCard, Landmark, Loader2, LogOut, Minus, Plus,
+  AlertTriangle, ArrowLeft, Banknote, CreditCard, Landmark, Loader2, LogOut, Minus, Plus,
   Printer, Search, ShoppingCart, Trash2, Wallet, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, salesApi, tillApi } from '@/services/api'
-import { printReceipt } from '@/lib/receipt'
+import { printReceipt, formatReceiptTime } from '@/lib/receipt'
 import type { ReceiptData } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useTaxRates } from '@/hooks/useTaxRates'
-import { productTaxRate, saleTotals, type SaleLineInput } from '@/lib/saleMath'
+import { productTaxRate, saleTotals, saleTaxIncluded, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
-import { registerHeldKey } from '@/lib/localUserData'
+import { registerHeldKey, stripProductSecrets } from '@/lib/localUserData'
+import { confirmDialog } from '@/lib/dialog'
+import { setLeaveGuard } from '@/lib/leaveGuard'
 import type { Product } from '@/types'
 
 interface ModOption { id: string; name: string; price_delta: string; is_default: boolean; is_active: boolean }
@@ -210,7 +212,7 @@ export default function PosRegisterPage() {
   // The sale endpoint requires it; without it every register sale was refused.
   const [warehouseId, setWarehouseId] = useState<string>('')
   useEffect(() => {
-    inventoryApi.warehouses().then(({ data }) => {
+    inventoryApi.warehouses({ silentErrors: true }).then(({ data }) => {
       const list: { id: string; is_default?: boolean }[] = data.results ?? data
       const def = list.find((w) => w.is_default) ?? list[0]
       if (def) setWarehouseId(def.id)
@@ -220,13 +222,13 @@ export default function PosRegisterPage() {
 
   // VAT is charged server-side from each product's tax class, so it has to be
   // in what the cashier collects — see lib/saleMath.
-  const totals = useMemo(
-    () => saleTotals(lines.map((l): SaleLineInput => ({
+  const totals = useMemo(() => {
+    const inputs = lines.map((l): SaleLineInput => ({
       unitPrice: l.unit_price, quantity: l.quantity,
       taxRate: productTaxRate(l.product, taxRates), inclusive: l.product.tax_type === 'inclusive',
-    }))),
-    [lines, taxRates],
-  )
+    }))
+    return { ...saleTotals(inputs), taxIncluded: saleTaxIncluded(inputs) }
+  }, [lines, taxRates])
   const total = totals.total
   const change = Math.max(0, (parseFloat(tendered) || 0) - total)
 
@@ -257,7 +259,9 @@ export default function PosRegisterPage() {
   })
   const saveHeld = (next: HeldBasket[]) => {
     setHeld(next)
-    try { localStorage.setItem(HELD_KEY, JSON.stringify(next)) } catch { /* quota */ }
+    // Cost price and ledger accounts are never kept in a held basket.
+    const safe = next.map((b) => ({ ...b, lines: b.lines.map((l) => ({ ...l, product: stripProductSecrets(l.product) })) }))
+    try { localStorage.setItem(HELD_KEY, JSON.stringify(safe)) } catch { /* quota */ }
   }
   const newId = () => {
     try {
@@ -313,6 +317,8 @@ export default function PosRegisterPage() {
         ...receiptDefaults,
         invoiceNumber: data?.invoice_number ?? '',
         date: formatDate(data?.issue_date ?? new Date().toISOString()),
+        // The sale is being rung up now, so now is the time of sale.
+        time: formatReceiptTime(new Date().toISOString()),
         cashier: cashierName,
         lines: lines.map((l) => ({
           name: l.product.name, qty: l.quantity,
@@ -322,6 +328,7 @@ export default function PosRegisterPage() {
         // The saved invoice's own figures — what the customer was charged.
         subtotal: data?.subtotal ?? totals.subtotal,
         tax: data?.tax_amount ?? totals.tax,
+        taxIncluded: totals.taxIncluded,
         total: data?.total_amount ?? total,
         payments: [{ method, amount: data?.amount_paid ?? total }],
         amountTendered: method === 'cash' && tendered ? tendered : undefined,
@@ -339,13 +346,76 @@ export default function PosRegisterPage() {
     } finally { payingRef.current = false; setBusy(false) }
   }
 
+  /**
+   * Leave the register. Goes back to the page the cashier came from, or to the
+   * dashboard when there is nothing to go back to (a direct link or a fresh
+   * tab). If a sale is half rung up, ask first so nothing is lost by a stray
+   * tap. Held baskets are saved, so they are not affected.
+   */
+  // Asks before walking away from a half-rung sale. True means "go ahead".
+  const okToLeave = async () => {
+    if (lines.length === 0) return true
+    const n = lines.reduce((sum, l) => sum + l.quantity, 0)
+    const leave = await confirmDialog(
+      `This sale has ${n} item${n === 1 ? '' : 's'} that ${n === 1 ? 'has' : 'have'} not been paid for. ` +
+      'Leaving will clear them. Use "Hold" first if you want to keep this basket.',
+      { title: 'Leave the register?', confirmText: 'Leave', cancelText: 'Stay', danger: true },
+    )
+    if (!leave) refocus()
+    return leave
+  }
+
+  const leaveRegister = async () => {
+    if (!(await okToLeave())) return
+    if ((window.history.state?.idx ?? 0) > 0) navigate(-1)
+    else navigate('/dashboard')
+  }
+
+  // The register now sits beside the side menu. A click on any menu or top-bar link while a sale
+  // is half rung asks first (this app uses a plain router, so a route blocker is not available).
+  const okToLeaveRef = useRef(okToLeave)
+  useLayoutEffect(() => { okToLeaveRef.current = okToLeave })
+  const hasItemsRef = useRef(false)
+  useLayoutEffect(() => { hasItemsRef.current = lines.length > 0 })
+  // The command palette (Ctrl+K) asks the same question; a refresh or tab close gets the browser's own prompt.
+  useEffect(() => {
+    setLeaveGuard(() => (hasItemsRef.current ? okToLeaveRef.current() : Promise.resolve(true)))
+    const beforeUnload = (e: BeforeUnloadEvent) => { if (hasItemsRef.current) { e.preventDefault(); e.returnValue = '' } }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => { setLeaveGuard(null); window.removeEventListener('beforeunload', beforeUnload) }
+  }, [])
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!hasItemsRef.current || e.defaultPrevented || e.button !== 0) return
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!a || (a.target && a.target !== '_self')) return
+      const url = new URL(a.href, window.location.href)
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return
+      e.preventDefault()
+      e.stopPropagation()
+      void okToLeaveRef.current().then((ok) => { if (ok) navigate(url.pathname + url.search + url.hash) })
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [navigate])
+
   const tiles = query.trim() ? results : catalogue
   const enabledTenders = TENDERS.filter((t) => (organisation?.enabled_payment_types ?? TENDERS.map((x) => x.settingsKey)).includes(t.settingsKey))
 
   return (
-    // Full screen, no sidebar — the register owns the device.
-    <div className="fixed inset-0 z-40 flex flex-col bg-surface-950">
+    // Fills the content area beside the side menu (collapsible, so the till can stay wide).
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-surface-700 bg-surface-900 px-4 py-2.5">
+        <button
+          onClick={leaveRegister}
+          className="btn-secondary px-3 py-1.5 text-sm"
+          aria-label="Back"
+          title="Back"
+        >
+          <ArrowLeft size={17} />
+          <span>Back</span>
+        </button>
         <ShoppingCart size={17} className="text-brand-400" />
         <span className="font-semibold text-white">Register</span>
         <span className="text-xs text-slate-500">{organisation?.name}</span>
@@ -362,10 +432,11 @@ export default function PosRegisterPage() {
           <Wallet size={13} />
         </button>
         <button
-          onClick={() => navigate('/dashboard')}
-          className="btn-ghost px-2.5 py-1 text-[11px]" title="Leave the register"
+          onClick={leaveRegister}
+          className="btn-secondary px-2.5 py-1 text-[11px]" title="Leave the register" aria-label="Leave the register"
         >
           <LogOut size={13} />
+          <span className="hidden sm:inline">Exit</span>
         </button>
       </header>
 
@@ -400,7 +471,7 @@ export default function PosRegisterPage() {
             </div>
           )}
 
-          <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2.5 overflow-y-auto sm:grid-cols-3 xl:grid-cols-4">
+          <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2.5 overflow-y-auto pb-20 sm:grid-cols-3 xl:grid-cols-4">
             {tiles.map((p) => (
               <button
                 key={p.id} onClick={() => add(p)}
@@ -499,7 +570,7 @@ export default function PosRegisterPage() {
               {enabledTenders.map((t) => (
                 <button
                   key={t.key} onClick={() => takePayment(t.key)} disabled={busy || lines.length === 0}
-                  className="flex flex-col items-center gap-1 rounded-xl bg-brand-500 py-3 text-xs font-semibold text-white disabled:opacity-40"
+                  className="btn-primary flex-col gap-1 py-3 text-xs font-semibold"
                 >
                   <t.icon size={15} />{t.label}
                 </button>

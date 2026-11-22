@@ -20,8 +20,8 @@ export function FieldTooltip({ text }: { text: string }) {
       <span
         className={[
           'pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2',
-          'w-60 rounded-xl bg-surface-800 border border-surface-600',
-          'px-3 py-2.5 text-xs text-slate-300 leading-relaxed',
+          'ds-tip-bubble w-60 rounded-xl',
+          'px-3 py-2.5',
           'opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150',
           'z-[9999] shadow-xl',
         ].join(' ')}
@@ -29,7 +29,7 @@ export function FieldTooltip({ text }: { text: string }) {
       >
         {text}
         {/* Arrow */}
-        <span className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] border-transparent border-t-surface-600" />
+        <span className="ds-tip-arrow absolute top-full left-1/2 -translate-x-1/2 border-[5px]" />
       </span>
     </span>
   )

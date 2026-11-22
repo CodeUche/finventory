@@ -1,0 +1,739 @@
+/* ============================================================================
+   Audity design kit (.ds) — the designer's look for buttons and modules.
+   The <body> carries class "ds" (index.html), so EVERY screen gets this look:
+   buttons, inputs, tables, cards, badges, pop-ups and headings. <DsPage> and
+   a nested .ds still work (they redefine the same tokens).
+   Follows html.light / dark.
+   TO SWAP IN THE DESIGNER'S EXACT DESIGNS LATER: edit the tokens at the top of
+   this file and the rules in the sections below. The last section
+   ("GLOBAL COVERAGE") only maps the app's old one-off button/card/pop-up
+   class strings onto the same tokens, so it needs no page edits.
+   ========================================================================== */
+
+.ds{
+  /* ---- DARK (derived: the designs are light only) ---- */
+  --ds-title:#FFFFFF; --ds-ink:#F4F2FF; --ds-muted:#A9A6C4; --ds-link:#A499FF; --ds-danger:#FF8A8A;
+  --ds-card:rgba(255,255,255,.07); --ds-card-bd:rgba(255,255,255,.16);
+  --ds-field:rgba(255,255,255,.06); --ds-field-bd:rgba(222,216,255,.55);
+  --ds-th-bg:rgba(125,140,255,.22); --ds-th-tx:#C8D3FF;
+  --ds-row:rgba(255,255,255,.05); --ds-row-bd:rgba(160,175,255,.25); --ds-row-hover:rgba(125,140,255,.14);
+  --ds-tile:rgba(125,140,255,.18); --ds-tile-bd:rgba(164,153,255,.55); --ds-tile-tx:#C8D3FF;
+  --ds-btn:#E6E0FF; --ds-btn-tx:#110099; --ds-btn-sh:0 8px 22px rgba(164,153,255,.28);
+  --ds-outline:#A499FF; --ds-outline-tx:#C8C1FF;
+  --ds-good:#4ADE80; --ds-bad:#FF8A8A; --ds-warn:#FECB01;
+  --ds-pill-green-bg:rgba(34,197,94,.18);  --ds-pill-green-tx:#86EFAC;
+  --ds-pill-red-bg:rgba(239,68,68,.20);    --ds-pill-red-tx:#FF9B9B;
+  --ds-pill-yel-bg:rgba(254,203,1,.20);   --ds-pill-yel-tx:#FFEA99;
+  --ds-pill-gry-bg:rgba(255,255,255,.10);  --ds-pill-gry-tx:#C8C5E0;
+  --ds-pill-blue-bg:rgba(37,99,235,.25);   --ds-pill-blue-tx:#9DB8FF;
+  --ds-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+  font-family:'Roboto',system-ui,sans-serif;color:var(--ds-ink);
+}
+html.light .ds{
+  /* ---- LIGHT (designer's screens) ---- */
+  --ds-title:#111111; --ds-ink:#1C1B1F; --ds-muted:#55545C; --ds-link:#110099; --ds-danger:#990000;
+  --ds-card:rgba(250,250,250,.96); --ds-card-bd:#B9B4F2;
+  --ds-field:rgba(250,250,250,.95); --ds-field-bd:#77767F;
+  --ds-th-bg:#CFDAFB; --ds-th-tx:#0B3487;
+  --ds-row:#FAFAFA; --ds-row-bd:#A9B6E8; --ds-row-hover:#EEF1FD;
+  --ds-tile:#D2DEFA; --ds-tile-bd:#8E87E6; --ds-tile-tx:#1558EA;
+  --ds-btn:#021233; --ds-btn-tx:#FFFFFF; --ds-btn-sh:0 8px 20px rgba(2,18,51,.30);
+  --ds-outline:#110099; --ds-outline-tx:#110099;
+  --ds-good:#0A6B0A; --ds-bad:#B3001B; --ds-warn:#665100;
+  --ds-pill-green-bg:#D5F7D2; --ds-pill-green-tx:#0A5A0A;
+  --ds-pill-red-bg:#FFCCCC;   --ds-pill-red-tx:#990000;
+  --ds-pill-yel-bg:#FFE98A;   --ds-pill-yel-tx:#4D3B00;
+  --ds-pill-gry-bg:#E4E4E4;   --ds-pill-gry-tx:#55545C;
+  --ds-pill-blue-bg:#D2DEFA;  --ds-pill-blue-tx:#0B3487;
+  --ds-shadow:0 1px 2px rgba(0,0,0,.06);
+}
+
+/* ---- headings and text ---- */
+.ds h1{font-size:22px;font-weight:700;line-height:1.25;color:var(--ds-title)}
+.ds h1 + p, .ds h1 ~ p.text-slate-400, .ds h1 ~ p.text-slate-500{color:var(--ds-ink);font-size:16px}
+.ds h2, .ds h3{color:var(--ds-title)}
+.ds .text-white, .ds .text-slate-100, .ds .text-slate-200{color:var(--ds-title)}
+.ds .text-slate-300{color:var(--ds-ink)}
+.ds .text-slate-400, .ds .text-slate-500{color:var(--ds-muted)}
+.ds .text-brand-300, .ds .text-brand-400, .ds .text-brand-500{color:var(--ds-link)}
+.ds .text-green-400, .ds .text-emerald-400{color:var(--ds-good)}
+.ds .text-red-400, .ds .text-red-500{color:var(--ds-bad)}
+.ds .text-amber-400, .ds .text-yellow-400{color:var(--ds-warn)}
+
+.ds .text-amber-200\/90, .ds .text-amber-300{color:var(--ds-warn)}
+.ds .text-green-300{color:var(--ds-good)}
+
+/* ---- surfaces ---- */
+.ds .card, .ds .card-sm, .ds .stat-card{
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;box-shadow:var(--ds-shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.ds .bg-surface-800, .ds .bg-surface-900{background-color:var(--ds-card);border-color:var(--ds-card-bd)}
+.ds .border-surface-700, .ds .border-surface-800{border-color:var(--ds-card-bd)}
+
+/* ---- buttons ---- */
+.ds .btn-primary{
+  background:var(--ds-btn);color:var(--ds-btn-tx);border:1.5px solid transparent;border-radius:8px;
+  font-weight:500;box-shadow:var(--ds-btn-sh);
+}
+.ds .btn-primary:hover{background:var(--ds-btn);filter:brightness(1.1)}
+.ds .btn-secondary{
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;font-weight:500;
+}
+.ds .btn-secondary:hover{background:color-mix(in srgb,var(--ds-outline) 10%,transparent)}
+.ds .btn-ghost{color:var(--ds-link);border-radius:8px}
+.ds .btn-ghost:hover{background:color-mix(in srgb,var(--ds-link) 10%,transparent);color:var(--ds-link)}
+.ds .btn-danger{
+  background:transparent;color:var(--ds-danger);border:1.5px solid var(--ds-danger);border-radius:8px;
+}
+
+/* ---- inputs ---- */
+.ds .input, .ds select.input, .ds input.input, .ds textarea.input{
+  background:var(--ds-field);border:1.5px solid var(--ds-field-bd);border-radius:8px;color:var(--ds-ink);font-size:15px;
+}
+.ds .input::placeholder{color:var(--ds-muted)}
+.ds .input:focus{border-color:var(--ds-link);box-shadow:0 0 0 3px color-mix(in srgb,var(--ds-link) 22%,transparent)}
+.ds .label{color:var(--ds-ink);font-weight:500}
+
+/* ---- tables: periwinkle header band, off-white rows ----
+   Anything inside an element with class ds-paper (a print or invoice preview that has its own
+   white paper and inline colours) is left alone by these table rules. */
+.ds table:not(.ds-paper *){border-collapse:separate;border-spacing:0;width:100%}
+/* A header with no alignment class lines up with its column (the browser default is centred); any text-left/right/center class still wins. */
+:where(.ds th){text-align:start}
+.ds thead tr:not(.ds-paper *){background:var(--ds-th-bg);border:0}
+.ds thead th:not(.ds-paper *), .ds th:not(.ds-paper *){
+  background:var(--ds-th-bg);color:var(--ds-th-tx) !important;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.02em;
+  border-bottom:1px solid var(--ds-row-bd);
+}
+.ds tbody tr:not(.ds-paper *), .ds .table-row:not(.ds-paper *){background:var(--ds-row);border-bottom:1px solid var(--ds-row-bd);transition:background .12s}
+.ds tbody tr:hover:not(.ds-paper *), .ds .table-row:hover:not(.ds-paper *){background:var(--ds-row-hover)}
+.ds tbody td:not(.ds-paper *){color:var(--ds-ink);border-bottom:1px solid var(--ds-row-bd)}
+.ds tbody td.font-mono:not(.ds-paper *), .ds td .font-mono:not(.ds-paper *){font-family:'Roboto',system-ui,sans-serif}
+
+/* ---- badges become pills ---- */
+.ds .badge, .ds [class*="badge-"]{border-radius:999px;font-weight:500;padding:3px 12px;font-size:13px;border-width:1px}
+.ds .badge-green{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx);border-color:color-mix(in srgb,var(--ds-pill-green-tx) 35%,transparent)}
+.ds .badge-red{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx);border-color:color-mix(in srgb,var(--ds-pill-red-tx) 35%,transparent)}
+.ds .badge-orange{background:color-mix(in srgb,var(--ds-link) 16%,transparent);color:var(--ds-link);border-color:color-mix(in srgb,var(--ds-link) 40%,transparent)}
+.ds .badge-yellow{background:var(--ds-pill-yel-bg);color:var(--ds-pill-yel-tx);border-color:color-mix(in srgb,var(--ds-pill-yel-tx) 35%,transparent)}
+.ds .badge-slate{background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx);border-color:color-mix(in srgb,var(--ds-pill-gry-tx) 35%,transparent)}
+.ds .badge-blue, .ds .badge-purple{background:var(--ds-pill-blue-bg);color:var(--ds-pill-blue-tx);border-color:color-mix(in srgb,var(--ds-pill-blue-tx) 35%,transparent)}
+
+/* ---- page header and empty state helpers (used by the kit and hubs) ---- */
+.ds-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:24px}
+.ds-head h1{margin:0}
+.ds-head p{margin:4px 0 0;color:var(--ds-ink);font-size:16px}
+.ds-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:48px 16px;text-align:center;
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;color:var(--ds-link);font-size:18px;
+}
+
+/* ---- stat tiles: a row of outlined "Label  value" chips ---- */
+.ds-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:24px}
+.ds-stat{
+  display:flex;flex-direction:column;gap:4px;padding:14px 18px;min-width:0;
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;box-shadow:var(--ds-shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.ds-stat-label{font-size:14px;font-weight:500;color:var(--ds-muted)}
+.ds-stat-value{font-size:24px;font-weight:700;line-height:1.2;color:var(--ds-title);overflow-wrap:anywhere}
+.ds-stat[data-tone="good"] .ds-stat-label, .ds-stat[data-tone="good"] .ds-stat-value{color:var(--ds-good)}
+.ds-stat[data-tone="bad"] .ds-stat-label, .ds-stat[data-tone="bad"] .ds-stat-value{color:var(--ds-bad)}
+.ds-stat[data-tone="link"] .ds-stat-label, .ds-stat[data-tone="link"] .ds-stat-value{color:var(--ds-link)}
+.ds-stat[data-tone="warn"] .ds-stat-label, .ds-stat[data-tone="warn"] .ds-stat-value{color:var(--ds-warn)}
+
+.ds-stat.is-tile{background:var(--ds-tile);border-color:var(--ds-tile-bd);gap:2px}
+.ds-stat.is-tile .ds-stat-label{color:var(--ds-tile-tx)}
+.ds-stat.is-tile .ds-stat-value{font-size:20px}
+.ds-stat-sub{font-size:13px;color:var(--ds-tile-tx)}
+
+.ds-stat.has-icon{flex-direction:row;align-items:center;gap:14px}
+.ds-stat-ico{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;flex:none;background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx)}
+.ds-stat-ico[data-tone="good"]{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx)}
+.ds-stat-ico[data-tone="bad"]{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx)}
+.ds-stat-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ds-stat-body .ds-stat-value{font-size:20px}
+.ds-stat-body[data-tone="good"] .ds-stat-value{color:var(--ds-good)}
+.ds-stat-body[data-tone="bad"] .ds-stat-value{color:var(--ds-bad)}
+.ds-stat-body .ds-stat-label{color:var(--ds-ink)}
+
+/* ---- form card: link-coloured labels, tick options in a row ---- */
+.ds .ds-form .label{color:var(--ds-link);font-size:15px;font-weight:500}
+.ds-checks{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px 20px}
+.ds-checks label{display:flex;align-items:flex-start;gap:10px;color:var(--ds-ink)}
+.ds-checks input[type="checkbox"]{width:20px;height:20px;margin-top:2px;flex:none;accent-color:var(--ds-link)}
+.ds-checks input[type="checkbox"]:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+
+/* ---- tab bar: filled active tab, link-coloured others, underline rule ---- */
+.ds-tabs{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-bottom:20px;padding-bottom:8px;border-bottom:1.5px solid var(--ds-row-bd)}
+.ds-tab{
+  padding:8px 18px;border-radius:10px;border:0;background:transparent;cursor:pointer;
+  font-size:16px;font-weight:600;color:var(--ds-link);transition:background .12s;
+}
+.ds-tab:hover{background:color-mix(in srgb,var(--ds-link) 10%,transparent)}
+.ds-tab:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds-tab[aria-selected="true"], .ds-tab.is-active{background:var(--ds-btn);color:var(--ds-btn-tx)}
+.ds-tab + .ds-tab::before{content:none}
+
+/* ---- filter row ---- */
+.ds-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin-bottom:20px}
+.ds-filters > .ds-filters-end{margin-left:auto}
+
+/* ---- table shell, empty row, status text, info box, modal panel ---- */
+.ds .ds-table{padding:0;overflow:hidden}
+.ds-empty-cell{padding:44px 16px;text-align:center;font-size:18px;color:var(--ds-link)}
+.ds-status{font-weight:600;text-transform:capitalize}
+.ds-info{
+  display:flex;gap:10px;align-items:flex-start;padding:12px 16px;margin-bottom:20px;border-radius:10px;font-size:14px;
+  background:var(--ds-tile);border:1.5px solid var(--ds-tile-bd);color:var(--ds-ink);
+}
+.ds .ds-modal{
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-link);border-radius:16px;
+  backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 20px 60px rgba(0,0,0,.35);
+}
+.ds .ds-modal h2{font-size:20px;font-weight:700}
+.ds{--ds-modal-bg:#1B1A2E}
+html.light .ds{--ds-modal-bg:#FAFAFA}
+
+/* ---- hub pages: big tiles ---- */
+.ds-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px}
+.ds-hub-tile{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:150px;padding:22px 16px;
+  text-align:center;text-decoration:none;font-size:18px;font-weight:500;color:var(--ds-ink);
+  background:var(--ds-card);border:1.5px solid var(--ds-link);border-radius:10px;box-shadow:var(--ds-shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:.16s;
+}
+.ds-hub-tile:hover{transform:translateY(-2px);box-shadow:var(--ds-btn-sh)}
+.ds-hub-tile:focus-visible{outline:2px solid var(--ds-link);outline-offset:3px}
+.ds-hub-ico{color:var(--ds-link)}
+
+/* ---- procurement batch: blue summary tiles, pill search, folder cards (new names, nothing above is changed) ---- */
+.ds-proc-tile{
+  display:block;text-align:left;padding:16px 18px;border-radius:8px;
+  background:var(--ds-tile);border:1.5px solid transparent;color:var(--ds-th-tx);
+}
+.ds-proc-tile[data-clickable="true"]{cursor:pointer}
+.ds-proc-tile[data-clickable="true"]:hover{border-color:var(--ds-tile-bd)}
+.ds-proc-tile[data-active="true"]{border-color:var(--ds-link);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-link) 30%,transparent)}
+.ds-proc-tile:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds-proc-tile .ds-proc-tile-label{font-size:16px;color:var(--ds-th-tx)}
+.ds-proc-tile .ds-proc-tile-value{font-size:20px;font-weight:700;margin-top:4px}
+.ds-proc-tile .ds-proc-tile-hint{font-size:12px;color:var(--ds-th-tx);margin-top:2px}
+.ds-proc-panel{padding:16px;border:1.5px solid var(--ds-tile-bd);border-radius:8px;background:color-mix(in srgb,var(--ds-card) 60%,transparent)}
+.ds-proc-panel > h3{font-size:18px;font-weight:400;color:var(--ds-th-tx);margin:0 0 12px}
+.ds-proc-search{position:relative}
+.ds .ds-proc-search input.input{border-radius:999px;padding-left:40px}
+.ds-proc-folder{
+  display:flex;align-items:flex-start;gap:12px;padding:16px;cursor:pointer;text-align:left;width:100%;
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:10px;box-shadow:var(--ds-shadow);transition:.16s;
+}
+.ds-proc-folder:hover, .ds-proc-folder:focus-within{border-color:var(--ds-link);transform:translateY(-1px)}
+.ds-proc-folder-ico{width:40px;height:40px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--ds-tile);color:var(--ds-link)}
+.ds-proc-section-title{font-size:16px;font-weight:700;color:var(--ds-title);margin:0 0 12px}
+.ds-proc-crumb{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px;color:var(--ds-ink)}
+.ds-proc-crumb button{color:var(--ds-link)}
+.ds-proc-crumb button:hover{text-decoration:underline}
+.ds-proc-crumb button:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px;border-radius:4px}
+@media(max-width:640px){
+  .ds-proc-tile .ds-proc-tile-value{font-size:17px}
+}
+
+@media(max-width:640px){
+  .ds h1{font-size:20px}
+  .ds-hub{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .ds-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .ds-stat{padding:10px 12px}.ds-stat-value{font-size:20px}
+  .ds-tab{padding:6px 12px;font-size:14px}
+  .ds-filters > .ds-filters-end{margin-left:0}
+  .ds-hub-tile{min-height:120px;font-size:16px}
+}
+
+/* ---- search dropdowns must float above the cards that follow them ----
+   .card uses backdrop-filter, which makes every card its own stacking layer, so a
+   dropdown's z-index stayed trapped inside its own card and later cards painted
+   over it. Lift the card that holds focus, and give floating lists a solid fill. */
+.ds .card:focus-within{position:relative;z-index:30}
+.ds .absolute.bg-surface-800{background-color:var(--ds-modal-bg)}
+
+/* ============================================================================
+   GLOBAL COVERAGE — maps the app's old one-off class strings onto the kit.
+   Nothing here is page specific. When the designer's exact screens arrive,
+   edit the tokens and rules above; these lines keep every other screen in step.
+   ========================================================================== */
+
+/* ---- every button: disabled, focus ring ---- */
+.ds .btn-primary:disabled, .ds .btn-secondary:disabled, .ds .btn-ghost:disabled, .ds .btn-danger:disabled{
+  opacity:.5;cursor:not-allowed;box-shadow:none;filter:none;
+}
+.ds :is(button,a,[role="button"],[role="tab"],summary,[tabindex="0"]):focus-visible{
+  outline:2px solid var(--ds-link);outline-offset:2px;
+}
+.ds .btn-primary:focus-visible, .ds .btn-secondary:focus-visible, .ds .btn-ghost:focus-visible, .ds .btn-danger:focus-visible{
+  outline:2px solid var(--ds-link);outline-offset:2px;
+}
+.ds .btn-danger:hover{background:color-mix(in srgb,var(--ds-danger) 12%,transparent)}
+.ds .btn-primary, .ds .btn-secondary, .ds .btn-danger{min-height:40px;justify-content:center}
+
+/* ---- old filled buttons (gold / navy / green / amber / red written inline) -> primary ---- */
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600):not(.btn-primary):not(.btn-ghost):not(.ds-tab){
+  background:var(--ds-btn);color:var(--ds-btn-tx);border:1.5px solid transparent;border-radius:8px;font-weight:500;box-shadow:var(--ds-btn-sh);
+}
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600):not(.btn-primary):not(.btn-ghost):not(.ds-tab):hover:not(:disabled){
+  background:var(--ds-btn);filter:brightness(1.1);
+}
+/* labels and icons inside those buttons follow the button text colour */
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600) :is(.text-white,.text-always-white,.text-surface-950,.text-slate-100,.text-slate-200){color:inherit !important}
+
+/* ---- old solid red buttons and red tint buttons -> danger (outlined) ---- */
+.ds :is(button,a,[role="button"]):is(.bg-red-500,.bg-red-600,.bg-red-500\/10,.bg-red-500\/15,.bg-red-500\/20):not(.btn-primary){
+  background:transparent;color:var(--ds-danger);border:1.5px solid var(--ds-danger);border-radius:8px;font-weight:500;box-shadow:none;
+}
+.ds :is(button,a,[role="button"]):is(.bg-red-500,.bg-red-600,.bg-red-500\/10,.bg-red-500\/15,.bg-red-500\/20):not(.btn-primary):hover:not(:disabled){
+  background:color-mix(in srgb,var(--ds-danger) 12%,transparent);filter:none;
+}
+.ds :is(button,a,[role="button"]):is(.bg-red-500,.bg-red-600) :is(.text-white,.text-always-white){color:inherit !important}
+
+/* ---- old tinted / grey buttons -> secondary (outlined) ---- */
+.ds :is(button,a,[role="button"]):is(.bg-surface-700,.bg-surface-600,.bg-brand-500\/10,.bg-brand-500\/15,.bg-brand-500\/20,.bg-brand-500\/25):not(.btn-primary):not(.btn-ghost):not(.ds-tab):not(.sidebar-item):not(.sidebar-item-active):not([role="tab"]){
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;font-weight:500;
+}
+.ds :is(button,a,[role="button"]):is(.bg-surface-700,.bg-surface-600,.bg-brand-500\/10,.bg-brand-500\/15,.bg-brand-500\/20,.bg-brand-500\/25):not(.btn-primary):not(.btn-ghost):not(.ds-tab):not(.sidebar-item):not(.sidebar-item-active):not([role="tab"]):hover:not(:disabled){
+  background:color-mix(in srgb,var(--ds-outline) 12%,transparent);
+}
+
+/* ---- icon buttons and text buttons that only change colour on hover ---- */
+.ds :is(button,a):is([class*="hover:bg-surface-"],[class*="hover:bg-brand-"]):not(.btn-primary):not(.btn-secondary):not(.sidebar-item):not(.sidebar-item-active):hover:not(:disabled){
+  background:color-mix(in srgb,var(--ds-link) 12%,transparent);
+}
+.ds button[class*="hover:text-white"]:hover, .ds button[class*="hover:text-slate-200"]:hover{color:var(--ds-link)}
+
+/* ---- pop-ups: solid panel with the kit border, so the page behind never shows through ---- */
+.ds .fixed.inset-0 :is(.card, .card-sm, .bg-surface-800, .bg-surface-900):not(.absolute){
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-link);border-radius:16px;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.ds .fixed.inset-0 :is(.card, .card-sm, .bg-surface-800, .bg-surface-900) :is(.card, .card-sm, .bg-surface-800, .bg-surface-900){
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;
+}
+.ds [role="dialog"] h2{font-size:20px;font-weight:700}
+
+/* ---- tab strips written as underlined buttons: keep the kit colours ---- */
+.ds .border-brand-500, .ds .border-brand-400{border-color:var(--ds-link)}
+.ds .bg-brand-500\/15:not(button):not(a), .ds .bg-brand-500\/10:not(button):not(a){background-color:color-mix(in srgb,var(--ds-link) 14%,transparent)}
+.ds .border-brand-500\/30{border-color:color-mix(in srgb,var(--ds-link) 40%,transparent)}
+.ds .focus\:border-brand-500:focus{border-color:var(--ds-link)}
+
+/* ============================================================================
+   QA FIXES — one rule each, covering every screen, not page by page
+   ========================================================================== */
+
+/* Old slate cards (bg-slate-700/800/900 + their borders) never flipped to the
+   light theme: dark navy boxes with dark labels. They now follow the kit card. */
+.ds :is(.bg-slate-700, .bg-slate-800, .bg-slate-900){background-color:var(--ds-card)}
+.ds :is(.border-slate-600, .border-slate-700, .border-slate-800){border-color:var(--ds-card-bd)}
+.ds :is(.divide-slate-700, .divide-slate-800) > :not([hidden]) ~ :not([hidden]){border-color:var(--ds-card-bd)}
+
+/* Floating panels (slide-overs, drawers, chat, menus) must be SOLID. The card
+   rule above makes cards see-through (frosted), which is right for cards on the
+   page but wrong for anything that floats over the page. Backdrops (inset-0)
+   are left alone. */
+.ds :is(.fixed, .absolute):is(.bg-surface-800, .bg-surface-900, .bg-surface-950, .bg-slate-800, .bg-slate-900, .card, .card-sm):not(.inset-0){
+  background:var(--ds-modal-bg);backdrop-filter:none;-webkit-backdrop-filter:none;
+  border-color:var(--ds-card-bd);
+}
+
+/* Tinted status boxes written for the dark theme (dark red / green / yellow
+   panels with pale text) had no light version: dark translucent boxes on a
+   light page and pale text on pink. Light theme gets the kit's pale tints with
+   dark text (all pairs 7:1 or better). */
+html.light .ds :is([class*="bg-red-900"], [class*="bg-red-950"], [class*="bg-red-800"]){background-color:#FFE6E6;border-color:#FFCCCD}
+html.light .ds :is([class*="bg-green-900"], [class*="bg-green-950"], [class*="bg-emerald-900"], [class*="bg-emerald-950"]){background-color:#E8FFE6;border-color:#A2FF99}
+html.light .ds :is([class*="bg-amber-900"], [class*="bg-amber-950"], [class*="bg-yellow-900"], [class*="bg-yellow-950"]){background-color:#FFF5CC;border-color:#FEE067}
+html.light .ds :is([class*="bg-blue-900"], [class*="bg-blue-950"], [class*="bg-indigo-900"], [class*="bg-indigo-950"]){background-color:#ECF2FD;border-color:#A2BCF6}
+html.light .ds :is([class*="bg-slate-800/"], [class*="bg-slate-900/"]){background-color:rgba(255,255,255,.7);border-color:var(--ds-card-bd)}
+html.light .ds :is([class*="text-red-200"], [class*="text-red-300"], [class*="text-red-400"], [class*="text-red-500"]){color:#990003}
+html.light .ds :is([class*="text-green-200"], [class*="text-green-300"], [class*="text-green-400"], [class*="text-emerald-200"], [class*="text-emerald-300"], [class*="text-emerald-400"]){color:#0A5A0A}
+html.light .ds :is([class*="text-amber-200"], [class*="text-amber-300"], [class*="text-amber-400"], [class*="text-yellow-200"], [class*="text-yellow-300"], [class*="text-yellow-400"]){color:#665100}
+html.light .ds :is([class*="text-blue-200"], [class*="text-blue-300"], [class*="text-blue-400"], [class*="text-indigo-300"], [class*="text-indigo-400"]){color:#0D358C}
+
+/* Solid yellow / green / red badges: the kit's warning yellow and light greens
+   need DARK text (white on them is about 1.6:1). Buttons are handled above. */
+.ds :is(span, div, p, td)[class~="bg-amber-500"], .ds :is(span, div, p, td)[class~="bg-amber-400"],
+.ds :is(span, div, p, td)[class~="bg-yellow-500"], .ds :is(span, div, p, td)[class~="bg-yellow-400"],
+.ds :is(span, div, p, td)[class~="bg-orange-500"], .ds :is(span, div, p, td)[class~="bg-orange-400"]{color:#332900}
+.ds :is(span, div, p, td)[class~="bg-green-500"], .ds :is(span, div, p, td)[class~="bg-emerald-500"]{color:#053300}
+.ds :is(span, div, p, td)[class~="bg-red-500"]:not(.text-always-white){background-color:#CC0003;color:#FFFFFF}
+.ds .text-red-600, .ds .text-red-700{color:var(--ds-bad)}
+
+/* Chart legends: their labels carry an inline pale grey that only reads on dark. */
+html.light .recharts-legend-wrapper span, html.light .recharts-legend-item-text{color:#1C1B1F !important}
+
+/* The public shop is always a white page: pin its greys and white-on-colour text
+   so the app theme (dark or light) cannot recolour them. */
+.ds .shop-light .text-slate-400, .ds .shop-light .text-slate-500{color:#55545C}
+.ds .shop-light .text-slate-600, .ds .shop-light .text-slate-700{color:#333333}
+.ds .shop-light .text-slate-900, .ds .shop-light .text-slate-800{color:#111111}
+.ds .shop-light .text-white{color:#FFFFFF}
+
+/* ---- filter rows: selects keep a readable width, ghost/outline buttons read as buttons ---- */
+.ds select.input{min-width:9rem}
+html.light .ds .btn-secondary, html.light .ds .btn-ghost{color:var(--ds-outline-tx)}
+html.light .ds .btn-secondary{border-color:var(--ds-outline);background:rgba(255,255,255,.55)}
+
+/* ---- switches (any button whose only child is a sliding knob) ----
+   One look everywhere: a visible track and knob in both themes, on and off. The
+   old tracks used bg-brand-500 (a pale button colour in the kit) with a white
+   knob, which left white-on-pale pills with no visible knob. */
+.ds button:has(> span.rounded-full[class*="translate-x"]){
+  background:var(--sw-off-bg) !important;border:1.5px solid var(--sw-off-bd) !important;
+}
+.ds button:has(> span.rounded-full[class*="translate-x-5"]), .ds button:has(> span.rounded-full[class*="translate-x-[1"]),
+.ds button:has(> span.rounded-full[class*="translate-x-4"]), .ds button:has(> span.rounded-full[class*="translate-x-6"]),
+.ds button:has(> span.rounded-full[class*="translate-x-[2"]){
+  background:var(--sw-on-bg) !important;border-color:var(--sw-on-bg) !important;
+}
+.ds button > span.rounded-full[class*="translate-x"]{background:var(--sw-knob-off) !important;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.ds button > span.rounded-full[class*="translate-x-5"], .ds button > span.rounded-full[class*="translate-x-[1"],
+.ds button > span.rounded-full[class*="translate-x-4"], .ds button > span.rounded-full[class*="translate-x-6"],
+.ds button > span.rounded-full[class*="translate-x-[2"]{background:var(--sw-knob-on) !important}
+.ds{--sw-off-bg:rgba(255,255,255,.16);--sw-off-bd:#A9A6C4;--sw-on-bg:#A499FF;--sw-knob-off:#E6E0FF;--sw-knob-on:#110099}
+html.light .ds{--sw-off-bg:#CCCCCC;--sw-off-bd:#808080;--sw-on-bg:#1558EA;--sw-knob-off:#FFFFFF;--sw-knob-on:#FFFFFF}
+
+/* ---- wide tables scroll inside their card; trim cell padding a little so action columns fit ---- */
+.ds .overflow-x-auto :is(th, td).px-5, .ds .overflow-x-auto :is(th, td).px-4{padding-left:.7rem;padding-right:.7rem}
+.ds .overflow-x-auto :is(td, th):last-child{white-space:nowrap}
+
+/* Chart legend labels: series colours (blue, violet) are too dim as text; swatches keep the colour. */
+.ds .recharts-legend-item-text, .ds .recharts-legend-wrapper span{color:var(--ds-ink) !important}
+
+/* Placeholder dashes ("—") and faint greys were slate-600/700: 1.5:1 on dark. */
+.ds .text-slate-600, .ds .text-slate-700{color:var(--ds-muted)}
+
+/* Disabled buttons stay readable (not faded to 50%): muted text and a dashed outline show "off". */
+.ds button:disabled:not(.btn-primary):not(.btn-danger){opacity:1 !important}
+.ds button:disabled:is([class*="border-"], .btn-secondary, .btn-ghost):not(.btn-primary){color:var(--ds-muted) !important;border-style:dashed}
+
+/* Switches, light theme: a clearer off state (dark outline, grey track, white knob with a ring). */
+html.light .ds{--sw-off-bg:#B3B3B3;--sw-off-bd:#4D4D4D;--sw-knob-off:#FFFFFF}
+html.light .ds button > span.rounded-full[class*="translate-x"]{box-shadow:0 0 0 1px rgba(0,0,0,.35),0 1px 3px rgba(0,0,0,.3)}
+
+/* ---- wide tables: the last column (actions) stays visible while the rest scrolls ---- */
+.ds .overflow-x-auto > table :is(th, td):last-child{
+  position:sticky;right:0;z-index:2;
+  box-shadow:-8px 0 8px -8px rgba(0,0,0,.45);
+}
+/* Solid versions of the table colours so the sticky cell matches its row at rest and on hover
+   (a see-through cell would show the scrolled content behind it). */
+.ds{--tb-head:#3E478A;--tb-row:#1D1C30;--tb-hover:#26284A}
+html.light .ds{--tb-head:#CFDAFB;--tb-row:#FAFAFA;--tb-hover:#EEF1FD}
+.ds .overflow-x-auto > table thead th:last-child{background:var(--tb-head)}
+.ds .overflow-x-auto > table tbody td:last-child{background:var(--tb-row)}
+.ds .overflow-x-auto > table tbody tr:hover td:last-child{background:var(--tb-hover)}
+
+/* ============================================================================
+   KIT CONTROLS — dropdowns, dates, ticks (one look for every screen)
+   ========================================================================== */
+
+/* ---- the closed dropdown: the kit chevron instead of the operating system's ----
+   The open list is drawn by components/KitSelect.tsx. On touch phones the native picker
+   opens, so its option colours are set too (dark and light). */
+.ds{
+  --ds-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23E6E0FF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --ds-pop-bg:#1B1A2E; --ds-pop-hover:rgba(164,153,255,.18); --ds-pop-bd:#A499FF;
+}
+html.light .ds{
+  --ds-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%231C1B1F' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --ds-pop-bg:#FFFFFF; --ds-pop-hover:#E6EBFB; --ds-pop-bd:#110099;
+}
+.ds select:not([multiple]):not([size]){
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;
+  background-image:var(--ds-chevron);background-repeat:no-repeat;
+  background-position:right .75rem center;background-size:16px 16px;
+  padding-right:2.25rem;cursor:pointer;text-overflow:ellipsis;
+}
+.ds select:disabled{cursor:not-allowed}
+.ds select option, .ds select optgroup{background-color:var(--ds-pop-bg);color:var(--ds-ink)}
+.ds select:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+
+/* ---- the open list ---- */
+.kit-select-panel{
+  position:fixed;z-index:10050;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--ds-pop-bg);color:var(--ds-ink);
+  border:1.5px solid var(--ds-pop-bd);border-radius:10px;
+  box-shadow:0 14px 40px rgba(0,0,0,.35);font-family:'Roboto',system-ui,sans-serif;font-size:15px;
+}
+.kit-select-search{
+  display:flex;align-items:center;gap:8px;padding:8px 12px;flex:none;
+  border-bottom:1px solid var(--ds-card-bd);color:var(--ds-muted);
+}
+.kit-select-search input{
+  flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--ds-ink);font-size:15px;
+}
+.kit-select-search input::placeholder{color:var(--ds-muted)}
+.kit-select-list{overflow-y:auto;padding:4px;outline:none;flex:1;min-height:0}
+.kit-select-option{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:8px 10px;border-radius:6px;cursor:pointer;color:var(--ds-ink);
+}
+.kit-select-option[data-active="true"]{background:var(--ds-pop-hover)}
+.kit-select-option[aria-selected="true"]{font-weight:600;color:var(--ds-link)}
+.kit-select-option[aria-disabled="true"]{opacity:.45;cursor:not-allowed}
+.kit-select-option-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kit-select-group{padding:8px 10px 4px;font-size:12px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ds-muted)}
+.kit-select-empty{padding:12px;text-align:center;color:var(--ds-muted)}
+
+/* ---- native date / time boxes: kit colours, readable calendar icon ---- */
+.ds input[type="date"], .ds input[type="time"], .ds input[type="month"], .ds input[type="datetime-local"]{color-scheme:dark;min-height:2.5rem}
+html.light .ds input[type="date"], html.light .ds input[type="time"],
+html.light .ds input[type="month"], html.light .ds input[type="datetime-local"]{color-scheme:light}
+.ds input[type="date"]::-webkit-calendar-picker-indicator,
+.ds input[type="time"]::-webkit-calendar-picker-indicator,
+.ds input[type="month"]::-webkit-calendar-picker-indicator,
+.ds input[type="datetime-local"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.85}
+.ds input[type="date"]::-webkit-calendar-picker-indicator:hover{opacity:1}
+
+/* ---- ticks and round buttons: the kit colour, never the browser's bright blue ---- */
+.ds input[type="checkbox"], .ds input[type="radio"]{accent-color:var(--ds-link)}
+.ds input[type="checkbox"]:focus-visible, .ds input[type="radio"]:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds input[type="range"]{accent-color:var(--ds-link)}
+
+/* ============================================================================
+   OVERLAYS — keep floating helpers off pop-ups
+   ========================================================================== */
+
+/* While a pop-up or slide-over is open the support chat (bubble and panel) steps out of the way,
+   so it can never sit over a pop-up's footer buttons. */
+body[data-popup-open] [data-support-chat]{display:none !important}
+/* Bubble: a little see-through while idle so a row action behind it stays visible. */
+button[data-support-chat]{opacity:.92}
+button[data-support-chat]:hover, button[data-support-chat]:focus-visible{opacity:1}
+
+/* ============================================================================
+   POP-UPS — the designer's pattern for every pop-up (Pop Up 5, 10, 58, 111, 121)
+   ========================================================================== */
+
+/* Colours: ivory card (#FFFFF8) in light, solid pink Delete, navy outline for Cancel. */
+.ds{--ds-del-bg:#6B2A33;--ds-del-tx:#FFD3D6}
+html.light .ds{--ds-del-bg:#FFCCCC;--ds-del-tx:#990000;--ds-modal-bg:#FFFFF8}
+
+/* The dim cover must sit over the sidebar and top bar too. A card with a blur filter becomes the
+   "screen" for any pop-up written inside it (so the cover stopped at the card's edge), and a focused
+   card is lifted above the page. Cards that hold a pop-up lose both. */
+.ds :is(.card, .card-sm, .stat-card, .ds-stat, .ds-proc-panel):has(.fixed.inset-0){
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.ds .card:focus-within:has(.fixed.inset-0){position:static;z-index:auto}
+
+/* Room above and below every centred pop-up (toasts sit in the top band), and the pop-up never grows
+   past the screen: its middle scrolls inside the window. */
+.ds .fixed.inset-0.items-center:not([data-drawer]){padding:4rem 1rem}
+.ds .fixed.inset-0.items-center > :is(.card, .card-sm, .bg-surface-800, .bg-surface-900, .ds-modal):not(.absolute){
+  max-height:calc(100vh - 8rem);max-height:calc(100dvh - 8rem);overflow-y:auto;overscroll-behavior:contain;
+}
+/* When a pop-up is taller than the window, its title row and button row stay in view. */
+.ds [data-kit-scrolls] [data-kit-header]{
+  position:sticky;top:calc(-1 * var(--kit-pad-top, 0px));z-index:3;background:var(--ds-modal-bg);padding-bottom:.5rem;
+  box-shadow:0 calc(-1 * var(--kit-pad-top, 0px)) 0 var(--ds-modal-bg), 0 1px 0 var(--ds-card-bd);
+}
+.ds [data-kit-scrolls] [data-kit-footer]{
+  position:sticky;bottom:calc(-1 * var(--kit-pad-bottom, 0px));z-index:3;background:var(--ds-modal-bg);padding-top:.75rem;
+  box-shadow:0 var(--kit-pad-bottom, 0px) 0 var(--ds-modal-bg), 0 -1px 0 var(--ds-card-bd);
+}
+
+/* Field labels in a pop-up: bold, link/navy, sentence case (not small uppercase grey). */
+.ds .fixed.inset-0 label:is(.label, .block, .text-xs, .text-sm):not(:has(input[type="checkbox"], input[type="radio"], input[type="file"])),
+.ds .fixed.inset-0 .label,
+.ds .fixed.inset-0 label.block > span:first-child:is(.text-xs, .text-sm){
+  color:var(--ds-link);font-size:15px;font-weight:700;text-transform:none;letter-spacing:normal;
+}
+.ds .fixed.inset-0 :is(label.label, .label, label.block){margin-bottom:.375rem}
+
+/* Cancel: always the outlined button (never a text link, never the old grey button). */
+.ds .fixed.inset-0 button[data-kit-role="cancel"]{
+  display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:40px;padding:.5rem 1.25rem;
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;
+  font-size:14px;font-weight:600;box-shadow:none;text-decoration:none;
+}
+.ds .fixed.inset-0 button[data-kit-role="cancel"]:hover:not(:disabled){background:color-mix(in srgb,var(--ds-outline) 12%,transparent);color:var(--ds-outline-tx)}
+.ds .fixed.inset-0 button[data-kit-role="cancel"]:disabled{opacity:.55;border-style:dashed}
+
+/* Delete / confirm-delete: the solid pink button (instead of a red outline). */
+.ds .ds-btn-delete,
+.ds .fixed.fixed.inset-0.inset-0 button:is(.btn-danger, .bg-red-600, .bg-red-500):not(.btn-primary):not(.btn-secondary):not(.btn-ghost){
+  display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:40px;padding:.5rem 1.25rem;
+  background:var(--ds-del-bg);color:var(--ds-del-tx);border:1.5px solid transparent;border-radius:8px;
+  font-size:14px;font-weight:600;box-shadow:none;cursor:pointer;
+}
+.ds .ds-btn-delete:hover:not(:disabled),
+.ds .fixed.fixed.inset-0.inset-0 button:is(.btn-danger, .bg-red-600, .bg-red-500):not(.btn-primary):not(.btn-secondary):not(.btn-ghost):hover:not(:disabled){
+  background:var(--ds-del-bg);filter:brightness(.95);color:var(--ds-del-tx);
+}
+.ds .ds-btn-delete:disabled{opacity:.6;cursor:not-allowed}
+.ds .ds-btn-delete:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .fixed.fixed.inset-0.inset-0 button:is(.bg-red-600, .bg-red-500) :is(.text-white, .text-always-white){color:inherit !important}
+
+/* The one confirm / delete pop-up (lib/dialog.tsx). */
+.ds .ds-dialog{
+  position:relative;width:100%;max-width:30rem;padding:2rem 2rem 1.75rem;text-align:center;
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-link);border-radius:16px;
+  box-shadow:0 20px 60px rgba(0,0,0,.35);max-height:calc(100dvh - 8rem);overflow-y:auto;
+}
+.ds .ds-dialog-x{
+  position:absolute;top:.75rem;right:.75rem;display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;border-radius:999px;background:transparent;border:0;color:var(--ds-title);cursor:pointer;
+}
+.ds .ds-dialog-x:hover{background:color-mix(in srgb,var(--ds-link) 12%,transparent)}
+.ds .ds-dialog-title{font-size:20px;font-weight:700;line-height:1.3;color:var(--ds-title);margin:0;padding:0 1.75rem}
+.ds .ds-dialog-text{margin:.75rem 0 0;font-size:15px;line-height:1.5;color:var(--ds-ink);white-space:pre-line}
+.ds .ds-dialog .input{margin-top:1rem;text-align:left}
+.ds .ds-dialog-actions{display:flex;gap:.75rem;margin-top:1.5rem}
+.ds .ds-dialog-actions > button{flex:1 1 0;min-height:44px}
+
+/* ============================================================================
+   NEW SALE TIDY — new class names only; they use the kit tokens above.
+   Used by pages/sales/NewSalePage.tsx and components/FieldTooltip.tsx.
+   ========================================================================== */
+.ds{
+  --ds-tick-img:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23110099' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.5 8.5 3 3 6-7'/%3E%3C/svg%3E");
+}
+html.light .ds{
+  --ds-tick-img:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23FFFFFF' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.5 8.5 3 3 6-7'/%3E%3C/svg%3E");
+}
+
+/* Round icon button: back arrow, quantity - and +, remove. */
+.ds .ds-icon-btn{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;
+  background:transparent;border:1.5px solid transparent;border-radius:8px;color:var(--ds-link);cursor:pointer;
+  transition:background .12s,border-color .12s;
+}
+.ds .ds-icon-btn:hover:not(:disabled){background:color-mix(in srgb,var(--ds-link) 12%,transparent);color:var(--ds-link)}
+.ds .ds-icon-btn:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .ds-icon-btn[data-outline="true"]{border-color:var(--ds-outline)}
+.ds .ds-icon-btn[data-tone="bad"]{color:var(--ds-bad)}
+.ds .ds-icon-btn[data-tone="bad"]:hover:not(:disabled){background:color-mix(in srgb,var(--ds-bad) 12%,transparent);color:var(--ds-bad)}
+
+/* Coloured text lines: kit tokens in both themes (the old blue / green utilities were off-kit in light). */
+.ds .ds-line-warn{color:var(--ds-warn)}
+.ds .ds-line-info{color:var(--ds-link)}
+.ds .ds-line-good{color:var(--ds-good)}
+.ds .ds-line-bad{color:var(--ds-bad)}
+
+/* Notice strip (till warning). */
+.ds .ds-strip{
+  display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:10px;font-size:14px;color:var(--ds-ink);
+  background:color-mix(in srgb,var(--ds-warn) 14%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-warn) 55%,transparent);
+}
+.ds .ds-strip svg{color:var(--ds-warn)}
+.ds .ds-strip a, .ds .ds-strip button{color:var(--ds-link);text-decoration:underline}
+
+/* Held-basket list. */
+.ds .ds-held{border:1.5px solid var(--ds-row-bd);border-radius:12px;overflow:hidden;background:var(--ds-row)}
+.ds .ds-held-row{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--ds-row-bd)}
+.ds .ds-held-row:last-child{border-bottom:0}
+.ds .ds-held-row:hover{background:var(--ds-row-hover)}
+
+/* Tick box. */
+.ds input[type="checkbox"].ds-check{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;flex:none;width:20px;height:20px;margin:0;
+  border:1.5px solid var(--ds-field-bd);border-radius:6px;background:var(--ds-field);cursor:pointer;
+  background-position:center;background-repeat:no-repeat;background-size:14px 14px;transition:background-color .12s,border-color .12s;
+}
+.ds input[type="checkbox"].ds-check:checked{background-color:var(--ds-link);border-color:var(--ds-link);background-image:var(--ds-tick-img)}
+.ds input[type="checkbox"].ds-check:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds input[type="checkbox"].ds-check:disabled{opacity:.55;cursor:not-allowed}
+.ds .ds-check-card{
+  display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:10px;cursor:pointer;user-select:none;
+  background:color-mix(in srgb,var(--ds-good) 10%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-good) 40%,transparent);
+}
+.ds .ds-check-card:hover{background:color-mix(in srgb,var(--ds-good) 16%,transparent)}
+
+/* Field tooltip bubble: solid kit pop-up colours (the old surface colours were see-through or off-kit). */
+.ds .ds-tip-bubble{
+  background:var(--ds-pop-bg);border:1.5px solid var(--ds-pop-bd);color:var(--ds-ink);
+  font-size:12px;line-height:1.5;text-transform:none;letter-spacing:0;font-weight:400;
+  box-shadow:0 12px 32px rgba(0,0,0,.30);
+}
+.ds .ds-tip-arrow{border-color:transparent;border-top-color:var(--ds-pop-bd)}
+
+/* Search icon sits at the start of the field (left, or right in a right-to-left language). */
+.ds .ds-field-icon{position:absolute;inset-inline-start:12px;top:50%;transform:translateY(-50%);color:var(--ds-muted);pointer-events:none}
+.ds .input.ds-has-icon{padding-inline-start:40px}
+
+/* Pay panel: summary + Confirm in one solid kit panel; on wide screens it stays in view while the rest of the column scrolls. */
+.ds .ds-pay-sticky{
+  display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:12px;
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-card-bd);box-shadow:0 8px 24px rgba(0,0,0,.18);
+}
+.ds .ds-pay-sticky > .card{background:transparent;border:0;box-shadow:none;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none}
+/* Only pin on tall screens: on a short one a pinned panel would slide over the cards above it. */
+@media (min-width:1024px) and (min-height:1100px){
+  .ds .ds-pay-sticky{position:sticky;bottom:12px;z-index:5}
+}
+
+/* ============================================================================
+   New sale & invoice page (designer: "New sale & new invoice").
+   Toggle buttons, radio cards, the items table band and the big total.
+   Dark and small-screen looks are derived from the kit tokens above.
+   ========================================================================== */
+.ds .ds-opt{
+  border:1.5px solid var(--ds-outline);color:var(--ds-outline-tx);background:transparent;border-radius:8px;
+  padding:9px 14px;font-size:15px;font-weight:500;text-align:center;cursor:pointer;
+  transition:background-color .12s,color .12s,border-color .12s;
+}
+.ds .ds-opt:hover:not(:disabled){background:color-mix(in srgb,var(--ds-link) 10%,transparent)}
+.ds .ds-opt[aria-pressed="true"]{background:var(--ds-btn);color:var(--ds-btn-tx);border-color:var(--ds-btn)}
+.ds .ds-opt:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .ds-opt:disabled{opacity:.5;cursor:not-allowed}
+
+.ds .ds-radio-card{
+  display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:8px;cursor:pointer;
+  background:var(--ds-row);border:1.5px solid var(--ds-row-bd);
+}
+.ds .ds-radio-card:hover{background:var(--ds-row-hover)}
+.ds .ds-radio-card:has(input:checked){background:var(--ds-tile);border-color:var(--ds-tile-bd)}
+.ds .ds-radio-card:has(input:focus-visible){outline:2px solid var(--ds-link);outline-offset:2px}
+.ds input[type="radio"].ds-radio{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;flex:none;width:22px;height:22px;margin:1px 0 0;border-radius:50%;
+  border:2px solid var(--ds-outline);background:transparent;cursor:pointer;
+}
+.ds input[type="radio"].ds-radio:checked{box-shadow:inset 0 0 0 4px var(--ds-tile),inset 0 0 0 11px var(--ds-outline)}
+
+.ds .ds-lines-wrap{overflow-x:auto}
+.ds .ds-lines{min-width:550px}
+.ds .ds-lines-row{
+  display:grid;gap:6px;align-items:start;
+  grid-template-columns:minmax(130px,2fr) 56px minmax(84px,1fr) 52px 70px minmax(84px,1fr) 32px;
+}
+.ds .ds-lines-head{
+  padding:10px 8px;border-radius:6px;background:var(--ds-th-bg);color:var(--ds-th-tx);
+  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;align-items:center;
+}
+.ds .ds-amount{
+  display:flex;align-items:center;justify-content:flex-end;min-height:42px;padding:0 12px;border-radius:8px;
+  border:1.5px solid var(--ds-row-bd);background:var(--ds-row);color:var(--ds-title);font-size:15px;
+}
+.ds .ds-grand{color:var(--ds-tile-tx);font-size:26px;font-weight:700;line-height:1.1}
+.ds .ds-sum-row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px;color:var(--ds-ink)}
+.ds .ds-sum-note{font-size:13px;color:var(--ds-link)}
+.ds .ds-ready-note{font-size:13px;color:var(--ds-muted)}
+.ds .ds-link-btn{color:var(--ds-link);font-weight:500;background:none;border:0;padding:0;cursor:pointer}
+.ds .ds-link-btn:hover{text-decoration:underline}
+.ds .ds-created{
+  display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 16px;border-radius:10px;font-size:15px;color:var(--ds-ink);
+  background:color-mix(in srgb,var(--ds-good) 12%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-good) 45%,transparent);
+}
+
+/* DERIVED - not designer-approved: 44px touch targets on phones and small tablets for this page. */
+@media (max-width:1023px){
+  .ds .ds-opt, .ds .ds-radio-card, .ds .ds-link-btn{min-height:44px}
+  .ds .ds-lines-row .input, .ds .ds-amount{min-height:44px}
+  .ds .ds-icon-btn{min-width:44px;min-height:44px}
+}
+
+/* Items table: narrow inputs so the six columns and the bin fit; a phone-size bin is a full touch target. */
+.ds .ds-lines-row .input{padding-left:8px;padding-right:8px}
+@media (max-width:1023px){
+  .ds .ds-lines-row{grid-template-columns:minmax(130px,2fr) 56px minmax(84px,1fr) 52px 70px minmax(84px,1fr) 44px}
+  .ds .ds-lines{min-width:562px}
+}

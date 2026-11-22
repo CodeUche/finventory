@@ -60,10 +60,13 @@ export default function OrderTrackingPage() {
   if (missing || !order || !shop) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white p-6 text-center">
-        <div>
-          <Package size={32} className="mx-auto mb-3 text-slate-300" />
-          <h1 className="text-lg font-semibold text-slate-800">We can&rsquo;t find that order</h1>
-          <p className="mt-1 text-sm text-slate-500">Check the reference and try again.</p>
+        <div role="alert">
+          <Package size={36} className="mx-auto mb-3" style={{ color: '#55545C' }} aria-hidden="true" />
+          {/* Inline colours: the app's dark theme would otherwise turn this white on white. */}
+          <h1 style={{ color: '#111111', fontSize: 20, fontWeight: 700 }}>We can&rsquo;t find that order</h1>
+          <p style={{ color: '#55545C', fontSize: 14, marginTop: 6 }}>
+            Check the order reference in your message and try again.
+          </p>
         </div>
       </div>
     )
@@ -74,7 +77,7 @@ export default function OrderTrackingPage() {
   const stepIndex = STEPS.findIndex((s) => s.key === order.status)
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4">
+    <div className="shop-light min-h-screen bg-slate-50 p-4 text-slate-900">
       <div className="mx-auto max-w-md space-y-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-xs uppercase tracking-wider text-slate-500">{shop.name}</p>

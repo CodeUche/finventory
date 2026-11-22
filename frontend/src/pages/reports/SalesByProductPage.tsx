@@ -4,7 +4,10 @@
  *  2. Margin scatter chart — revenue (X) vs gross margin % (Y), bubble size = units sold.
  *     Reveals which products are high-volume low-margin vs niche high-margin.
  */
+import { useChartKit } from '@/lib/chartKit'
+import { asList } from '@/lib/asList'
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { DS_CHART } from '@/lib/chartTheme'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ChevronDown, ChevronRight, Loader2, Package, BarChart2, TrendingUp } from 'lucide-react'
 import {
@@ -13,24 +16,10 @@ import {
 } from 'recharts'
 import { reportApi } from '@/services/api'
 import { formatCurrency, formatDate, formatNumber, getCurrencySymbol } from '@/lib/utils'
-import { useThemeAccent, getStoredTheme } from '@/hooks/useTheme'
 import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
 import type { SalesByProductRow, ProductSaleLine } from '@/types'
 
-function useTooltipStyle() {
-  const [isLight, setIsLight] = useState(() => getStoredTheme() === 'light')
-  useEffect(() => {
-    const h = (e: Event) => setIsLight((e as CustomEvent).detail === 'light')
-    window.addEventListener('themechange', h)
-    return () => window.removeEventListener('themechange', h)
-  }, [])
-  return isLight
-    ? { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', color: '#1e293b', fontSize: 12 }
-    : { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
-}
-
-const axisTickStyle = { fill: '#94a3b8', fontSize: 11 }
 const trunc = (s: string, n = 14) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
 function periodToParams(p: PeriodValue): Record<string, string> {
@@ -41,11 +30,9 @@ function periodToParams(p: PeriodValue): Record<string, string> {
 }
 
 export default function SalesByProductPage() {
-  const accent = useThemeAccent()
-  const tooltipStyle = useTooltipStyle()
-  const isLight = getStoredTheme() === 'light'
-  const ttLabel = isLight ? '#64748b' : '#94a3b8'
-  const ttText  = isLight ? '#1e293b' : '#f1f5f9'
+  const { accent, tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid, cursor, legendColor, labelColor } = useChartKit()
+  const ttLabel = tooltipLabelStyle.color
+  const ttText  = tooltipItemStyle.color
   const [period, setPeriod] = useState<PeriodValue>({ period: 'all' })
   const [rows, setRows]     = useState<SalesByProductRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -60,7 +47,7 @@ export default function SalesByProductPage() {
     setLoading(true)
     try {
       const resp = await reportApi.salesByProduct(params)
-      setRows(resp.data)
+      setRows(asList<SalesByProductRow>(resp.data))
       setExpandedId(null)
     } catch {
       setRows([])
@@ -122,6 +109,10 @@ export default function SalesByProductPage() {
         name:     r.product_name,
         revenue:  rev,
         margin:   parseFloat(margin.toFixed(1)),
+        // Where the dot is drawn: a huge loss or gain would stretch the axis to
+        // thousands of percent, so dots are held between -100% and +100%.
+        // The tooltip still shows the real margin.
+        plotMargin: Math.max(-100, Math.min(100, parseFloat(margin.toFixed(1)))),
         units:    Number(r.units_sold || 0),
       }
     }).filter(d => d.revenue > 0),
@@ -188,23 +179,23 @@ export default function SalesByProductPage() {
                 data={barChartData}
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                 <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
                   tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                 <YAxis type="category" dataKey="name" tick={axisTickStyle}
                   axisLine={false} tickLine={false} width={100} />
-                <Tooltip
+                <Tooltip cursor={cursor}
                   contentStyle={tooltipStyle}
                   labelStyle={{ color: ttLabel }}
                   itemStyle={{ color: ttText }}
                   formatter={(v: number) => formatCurrency(String(v))}
                 />
                 <Legend
-                  wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }}
-                  formatter={(val: string) => <span style={{ color: '#94a3b8' }}>{val}</span>}
+                  wrapperStyle={{ fontSize: 11, paddingTop: 12, color: legendColor }}
+                  formatter={(val: string) => <span style={{ color: legendColor }}>{val}</span>}
                 />
                 <Bar dataKey="Revenue"     fill={accent}    radius={[0, 4, 4, 0]} />
-                <Bar dataKey="GrossProfit" fill="#10b981"   radius={[0, 4, 4, 0]} />
+                <Bar dataKey="GrossProfit" fill={DS_CHART.good}   radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -219,31 +210,32 @@ export default function SalesByProductPage() {
               Each dot = one product. Right = more revenue. Up = higher margin. Ideal = top-right.
             </p>
             <ResponsiveContainer width="100%" height={250}>
-              <ScatterChart margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <ScatterChart margin={{ top: 10, right: 20, left: 12, bottom: 18 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                 <XAxis
                   type="number" dataKey="revenue" name="Revenue"
                   tick={axisTickStyle} axisLine={false} tickLine={false}
                   tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`}
-                  label={{ value: 'Revenue', position: 'insideBottom', offset: -2, fill: '#64748b', fontSize: 10 }}
+                  label={{ value: 'Revenue', position: 'insideBottom', offset: -12, fill: labelColor, fontSize: 10 }}
                 />
                 <YAxis
-                  type="number" dataKey="margin" name="Margin %"
-                  tick={axisTickStyle} axisLine={false} tickLine={false}
+                  type="number" dataKey="plotMargin" name="Margin %"
+                  domain={[-100, 100]} ticks={[-100, -50, 0, 50, 100]} allowDataOverflow
+                  tick={axisTickStyle} axisLine={false} tickLine={false} width={52}
                   tickFormatter={v => `${v}%`}
-                  label={{ value: 'GP %', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }}
+                  label={{ value: 'GP %', angle: -90, position: 'insideLeft', offset: 4, fill: labelColor, fontSize: 10 }}
                 />
                 <Tooltip
                   contentStyle={tooltipStyle}
-                  cursor={{ strokeDasharray: '3 3', stroke: '#475569' }}
+                  cursor={{ strokeDasharray: '3 3', stroke: labelColor }}
                   content={({ payload }) => {
                     if (!payload?.length) return null
                     const d = payload[0]?.payload as { name: string; revenue: number; margin: number; units: number }
                     return (
                       <div style={{ ...tooltipStyle, padding: '10px 12px' }} className="text-xs space-y-1">
                         <p style={{ color: ttText }} className="font-semibold">{d.name}</p>
-                        <p style={{ color: ttLabel }}>Revenue: <span className="text-emerald-400">{formatCurrency(String(d.revenue))}</span></p>
-                        <p style={{ color: ttLabel }}>Gross Margin: <span className="text-blue-400">{d.margin}%</span></p>
+                        <p style={{ color: ttLabel }}>Revenue: <span style={{ color: ttText }}>{formatCurrency(String(d.revenue))}</span></p>
+                        <p style={{ color: ttLabel }}>Gross Margin: <span style={{ color: ttText }}>{d.margin}%</span></p>
                         <p style={{ color: ttLabel }}>Units Sold: <span style={{ color: ttText }}>{d.units.toLocaleString()}</span></p>
                       </div>
                     )
@@ -257,16 +249,19 @@ export default function SalesByProductPage() {
                     const { cx, cy, payload } = props
                     const maxUnits = Math.max(...scatterData.map(d => d.units), 1)
                     const r = Math.max(6, Math.min(18, 6 + (payload.units / maxUnits) * 12))
-                    const fill = payload.margin >= 30 ? '#10b981' : payload.margin >= 15 ? accent : '#ef4444'
+                    const fill = payload.margin >= 30 ? DS_CHART.good : payload.margin >= 15 ? accent : DS_CHART.bad
                     return <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={0.7} stroke={fill} strokeWidth={1} />
                   }}
                 />
               </ScatterChart>
             </ResponsiveContainer>
-            <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> ≥30% margin</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-slate-500">
+              <span className="flex items-center gap-1 whitespace-nowrap"><span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: DS_CHART.good }} /> ≥30% margin</span>
               <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: accent }} /> 15–30%</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> &lt;15%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: DS_CHART.bad }} /> &lt;15%</span>
+              {scatterData.some(d => d.margin !== d.plotMargin) && (
+                <span className="basis-full">Dots beyond 100% are drawn at the edge; hover for the real figure.</span>
+              )}
             </div>
           </div>
         </div>

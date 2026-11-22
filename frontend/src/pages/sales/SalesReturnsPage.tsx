@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { Search, X, Loader2, RotateCcw, FileDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { salesApi } from '@/services/api'
@@ -26,6 +27,7 @@ function hexToRgb(hex?: string): [number, number, number] {
 }
 
 export default function SalesReturnsPage() {
+  const mounted = useIsMounted()
   const { organisation } = useAuthStore()
   const [returns, setReturns] = useState<SaleReturn[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,7 +60,7 @@ export default function SalesReturnsPage() {
       if (seq !== requestSeq.current) return // a newer request has since started
       setReturns(data.results ?? data)
     } catch {
-      if (seq === requestSeq.current) toast.error('Failed to load sales returns')
+      if (seq === requestSeq.current) { if (mounted.current) toast.error('Failed to load sales returns') }
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }
@@ -171,7 +173,7 @@ export default function SalesReturnsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <RotateCcw size={22} className="text-brand-400" /> Sales Returns
@@ -180,7 +182,7 @@ export default function SalesReturnsPage() {
         </div>
       </div>
 
-      <div className="card p-4 flex flex-wrap items-center gap-3">
+      <div className="ds-filters !mb-0">
         <div className="relative flex-1 min-w-[220px]">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
@@ -202,18 +204,18 @@ export default function SalesReturnsPage() {
         )}
       </div>
 
-      <div className="card overflow-x-auto">
+      <div className="card ds-table overflow-x-auto">
         {loading ? (
           <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-slate-500" size={24} /></div>
         ) : paged.length === 0 ? (
-          <div className="p-10 text-center text-slate-500 text-sm">No sales returns found</div>
+          <div className="ds-empty-cell">No Sales Returns Found</div>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-slate-400 uppercase border-b border-surface-700">
-                <th className="px-4 py-3">Return #</th>
+                <th className="px-4 py-3">Return Number</th>
                 <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Invoice</th>
+                <th className="px-4 py-3">Invoice Number</th>
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Reason</th>
                 <th className="px-4 py-3 text-right">Refund</th>
@@ -227,18 +229,19 @@ export default function SalesReturnsPage() {
                   className="border-b border-surface-800 hover:bg-surface-800/50 cursor-pointer transition-colors"
                   onClick={() => setSelected(ret)}
                 >
-                  <td className="px-4 py-3 font-mono text-xs text-brand-400">{ret.return_number}</td>
+                  <td className="px-4 py-3 text-brand-400">{ret.return_number}</td>
                   <td className="px-4 py-3 text-slate-300">{formatDate(ret.return_date)}</td>
-                  <td className="px-4 py-3 text-slate-300">{ret.invoice_number}</td>
+                  <td className="px-4 py-3 text-brand-400">{ret.invoice_number}</td>
                   <td className="px-4 py-3 text-slate-300">{ret.customer_name ?? 'Walk-in Customer'}</td>
                   <td className="px-4 py-3 text-slate-400">{REASON_LABEL[ret.reason] ?? ret.reason}</td>
-                  <td className="px-4 py-3 text-right text-red-400">{formatCurrency(ret.total_refund)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-400">{formatCurrency(ret.total_refund)}</td>
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={(e) => { e.stopPropagation(); downloadCreditNote(ret) }}
                       disabled={exporting}
-                      className="text-slate-400 hover:text-brand-400 transition-colors disabled:opacity-50"
+                      className="text-brand-400 hover:opacity-70 transition-opacity disabled:opacity-50 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                       title="Download Credit Note PDF"
+                      aria-label={`Download credit note ${ret.return_number}`}
                     >
                       <FileDown size={16} />
                     </button>
@@ -254,7 +257,7 @@ export default function SalesReturnsPage() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSelected(null)}>
-          <div className="bg-surface-900 border border-surface-700 rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="ds-modal max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-5 border-b border-surface-700 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-white">{selected.return_number}</h2>

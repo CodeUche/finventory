@@ -54,8 +54,8 @@ export default function BeginningBalancesPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+        <div className="min-w-0 flex-1 basis-80">
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Scale size={20} /> Beginning Balances
           </h1>
@@ -68,7 +68,7 @@ export default function BeginningBalancesPage() {
           <button onClick={load} className="btn-ghost" title="Refresh">
             <RefreshCw size={16} />
           </button>
-          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
+          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2 whitespace-nowrap">
             <BookOpen size={16} /> Enter / Edit Opening Balances
           </button>
         </div>

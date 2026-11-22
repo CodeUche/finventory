@@ -6,6 +6,7 @@
  * here and never touches the ledger.
  */
 
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { useEffect, useState } from 'react'
 import {
   AlertTriangle, Check, Copy, ExternalLink, Loader2, RefreshCw, Store, X,
@@ -14,6 +15,7 @@ import toast from 'react-hot-toast'
 import { storefrontApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
+import { publicWebOrigin } from '@/lib/publicOrigin'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 
 interface Shop {
@@ -56,7 +58,14 @@ const STATUS_BADGE: Record<Order['status'], string> = {
   completed: 'badge-green', cancelled: 'badge-red',
 }
 
+// The API sends decimals like "500.0000"; show money with 2 decimals. String-only, no float maths.
+function twoDecimals(v: string): string {
+  const [i, d = ''] = v.split('.')
+  return formatAmountInput(`${i}.${(d + '00').slice(0, 2)}`)
+}
+
 export default function StorefrontAdminPage() {
+  const mounted = useIsMounted()
   const [shop, setShop] = useState<Shop | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
@@ -70,8 +79,8 @@ export default function StorefrontAdminPage() {
   const [deliveryThreshold, setDeliveryThreshold] = useState('')
   useEffect(() => {
     if (!shop) return
-    setDeliveryCharge(formatAmountInput(shop.fixed_delivery_charge || '0'))
-    setDeliveryThreshold(shop.free_delivery_threshold != null ? formatAmountInput(shop.free_delivery_threshold) : '')
+    setDeliveryCharge(twoDecimals(shop.fixed_delivery_charge || '0'))
+    setDeliveryThreshold(shop.free_delivery_threshold != null ? twoDecimals(shop.free_delivery_threshold) : '')
   }, [shop?.id, shop?.fixed_delivery_charge, shop?.free_delivery_threshold])
 
   const load = async () => {
@@ -83,7 +92,7 @@ export default function StorefrontAdminPage() {
       ])
       setShop(s.data)
       setOrders(o.data.results ?? o.data)
-    } catch { toast.error('Could not load your storefront') }
+    } catch { { if (mounted.current) toast.error('Could not load your storefront') } }
     finally { setLoading(false) }
   }
 
@@ -129,7 +138,8 @@ export default function StorefrontAdminPage() {
     finally { setBusyId(null) }
   }
 
-  const publicUrl = shop ? `${window.location.origin}/s/${shop.slug}` : ''
+  const origin = publicWebOrigin()
+  const publicUrl = shop && origin ? `${origin}/s/${shop.slug}` : ''
   const copyLink = () => {
     navigator.clipboard?.writeText(publicUrl)
     setCopied(true); window.setTimeout(() => setCopied(false), 1800)
@@ -143,7 +153,7 @@ export default function StorefrontAdminPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Storefront</h1>
           <p className="text-sm text-slate-400">
@@ -154,14 +164,14 @@ export default function StorefrontAdminPage() {
         </div>
         <button
           onClick={() => { bypassNextGets(); load() }}
-          className="btn-ghost p-2 text-slate-400 hover:text-white sm:ml-auto" title="Refresh"
+          className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh"
         >
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
       {shop && (
-        <div className="card space-y-4 p-6">
+        <div className="card ds-form space-y-4 p-6">
           <div className="flex items-center gap-2 border-b border-surface-700 pb-3">
             <Store size={16} className="text-brand-400" />
             <h2 className="text-base font-semibold text-white">Your shop page</h2>
@@ -170,15 +180,22 @@ export default function StorefrontAdminPage() {
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 p-3">
-            <span className="font-mono text-sm text-white">{publicUrl}</span>
-            <button onClick={copyLink} className="btn-ghost ml-auto text-xs">
-              {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
-            </button>
-            <a href={`/s/${shop.slug}`} target="_blank" rel="noreferrer" className="btn-ghost text-xs">
-              <ExternalLink size={12} /> Open
-            </a>
-          </div>
+          {publicUrl ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 p-3">
+              <span className="font-mono text-sm text-white">{publicUrl}</span>
+              <button onClick={copyLink} className="btn-ghost ml-auto text-xs">
+                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
+              </button>
+              <a href={publicUrl} target="_blank" rel="noreferrer" className="btn-ghost text-xs">
+                <ExternalLink size={12} /> Open
+              </a>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-surface-600 bg-surface-800 p-3 text-sm text-slate-400">
+              Your shop page address is <span className="font-mono text-white">/s/{shop.slug}</span>. To copy a link
+              you can share, sign in to Audity in your web browser.
+            </div>
+          )}
 
           {!shop.is_published && (
             <div className="flex gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200/90">
@@ -251,13 +268,13 @@ export default function StorefrontAdminPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-4 pt-1">
+          <div className="ds-checks pt-1">
             {([
               ['is_published', 'Published', 'Customers can reach the page'],
               ['accepts_orders', 'Taking orders', 'Turn off to browse only'],
               ['hide_out_of_stock', 'Hide sold-out items', 'Rather than showing them greyed out'],
             ] as const).map(([key, label, hint]) => (
-              <label key={key} className="flex items-start gap-2 text-sm text-slate-300">
+              <label key={key} className="text-sm">
                 <input
                   type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-500"
                   checked={Boolean(shop[key])} disabled={saving}
@@ -271,7 +288,7 @@ export default function StorefrontAdminPage() {
       )}
 
       {/* ── Orders ──────────────────────────────────────────────────────── */}
-      <div className="card overflow-hidden p-0">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -286,10 +303,7 @@ export default function StorefrontAdminPage() {
             <tbody>
               {orders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center">
-                    <Store size={28} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No orders yet</p>
-                  </td>
+                  <td colSpan={7} className="ds-empty-cell">No Orders Yet</td>
                 </tr>
               ) : orders.map((o) => (
                 <tr key={o.id} className="table-row">

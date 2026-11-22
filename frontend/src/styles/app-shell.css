@@ -46,6 +46,11 @@ html.light body .app-shell.app-shell{
 .app-shell .fixed.right-0,
 .app-shell .fixed.left-0{margin:0 !important}
 
+/* breadcrumb trail in the designer's lavender */
+.app-shell nav[aria-label="Breadcrumb"] a{color:var(--sh-link) !important;opacity:.85}
+.app-shell nav[aria-label="Breadcrumb"] a:hover{opacity:1;text-decoration:underline}
+.app-shell nav[aria-label="Breadcrumb"] span.font-medium{color:var(--sh-head) !important}
+
 /* ---------------------------------------------------------------- top bar */
 .sh-top{
   position:relative;z-index:40;height:var(--sh-top-h);flex:none;display:flex;align-items:center;gap:20px;
@@ -188,3 +193,16 @@ html.light body .app-shell.app-shell{
   .sh-icon-btn{width:36px;height:36px}
   .sh-avatar{width:36px;height:36px;margin-left:4px;font-size:14px;border-width:2px}
 }
+
+/* ---- toasts sit below the top bar ----
+   The message area (react-hot-toast) lives outside .app-shell, so it cannot read
+   --sh-top-h; it reads --toast-top instead. Set whenever the top bar exists
+   (every signed-in page, including the register); auth pages keep the 16px
+   fallback. The top bar is 72px high at every width, plus a 12px gap. */
+body:has(.sh-top){--toast-top:84px}
+
+/* ---- an open slide-over (invoice detail, account drawer, offboarding) ----
+   The support chat bubble would sit on its buttons, so it steps aside while one is
+   open; toasts move left of the panel so they never cover its header buttons. */
+body:has([data-drawer="open"]) [data-support-chat]{display:none}
+/* the toast offset itself is measured per drawer in src/lib/drawerToastOffset.ts */

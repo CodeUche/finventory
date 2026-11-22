@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import toast from 'react-hot-toast'
+import { onceThisSession } from '@/lib/onceThisSession'
 import { billApi, customerApi, inventoryApi, orgApi, payrollApi, purchaseApi, salesApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
@@ -203,18 +204,21 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
         if (firstPollRef.current) {
           firstPollRef.current = false
-          if (items.length > 0) {
+          // One low-stock message per browser session and organisation, not one per page load.
+          if (items.length > 0 && onceThisSession(`low-stock:${organisationId}`)) {
             toast(
               items.length === 1
                 ? `⚠️ Low stock: ${items[0].product_name} (${items[0].quantity_available} left)`
                 : `⚠️ ${items.length} products are low on stock`,
-              { duration: 6000 },
+              // A fixed id means the same message can never stack twice (e.g. React dev double-run).
+              { id: 'low-stock-summary', duration: 6000 },
             )
           }
         } else {
           const newItems = items.filter((i) => !prevIdsRef.current.has(i.id))
           newItems.forEach((item) => {
             toast(`⚠️ Low stock: ${item.product_name} (${item.quantity_available} left)`, {
+              id: `low-stock-${item.id}`,
               duration: 5000,
             })
           })

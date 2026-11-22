@@ -69,7 +69,7 @@ export default function AccountDrilldownDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+    <div data-drawer="open" className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
       <div
         className="w-full max-w-2xl h-full bg-surface-900 border-l border-surface-700 overflow-y-auto"
         onClick={(e) => e.stopPropagation()}

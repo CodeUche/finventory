@@ -1,3 +1,4 @@
+import DateInput from '@/components/DateInput'
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
@@ -139,11 +140,11 @@ function NewInvoiceModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-400 block mb-1">Issue Date</label>
-              <input type="date" className="input w-full" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+              <DateInput className="w-full" value={issueDate} onChange={setIssueDate} />
             </div>
             <div>
               <label className="text-xs text-slate-400 block mb-1">Due Date</label>
-              <input type="date" className="input w-full" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              <DateInput className="w-full" value={dueDate} onChange={setDueDate} />
             </div>
           </div>
 

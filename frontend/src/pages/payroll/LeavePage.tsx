@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { asList } from '@/lib/asList'
 import {
   CalendarDays, Check, ClipboardList, Loader2, Plus, RefreshCw, X, XCircle,
   Gift, ArrowLeftRight, Banknote, Trash2,
@@ -178,7 +179,7 @@ export default function LeavePage() {
     setCarryForwardLoading(true)
     try {
       const res = await hrApi.carryForwardPreview(year - 1)
-      setCarryForwardRows(res.data)
+      setCarryForwardRows(asList<CarryForwardRow>(res.data))
     } catch {
       toast.error('Could not load the carry-forward preview')
     } finally {

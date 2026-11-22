@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -66,6 +67,7 @@ const BLANK = {
 const PO_EDITABLE_STATUSES = ['draft', 'sent', 'closed', 'canceled']
 
 export default function PurchasesPage() {
+  const mounted = useIsMounted()
   const [searchParams] = useSearchParams()
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [loading, setLoading] = useState(true)
@@ -142,7 +144,7 @@ export default function PurchasesPage() {
       const { data } = await purchaseApi.list({ ...params, page_size: 5000 })
       setOrders(data.results ?? data)
     } catch {
-      toast.error('Failed to load purchase orders')
+      { if (mounted.current) toast.error('Failed to load purchase orders') }
     } finally {
       setLoading(false)
     }
@@ -459,8 +461,8 @@ export default function PurchasesPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Purchases</h1>
-          <p className="text-slate-400 text-sm">{total} purchase orders</p>
+          <h1 className="text-2xl font-bold text-white">Purchase Orders</h1>
+          <p className="text-slate-400 text-sm">({total}) Purchase Orders</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={() => setShowWorkflowInfo(true)} className="btn-ghost p-2 text-slate-400 hover:text-white" title="What's the difference between a PO, a Bill and a Receipt?">
@@ -470,16 +472,16 @@ export default function PurchasesPage() {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button className="btn-primary" onClick={openModal}>
-            <Plus size={16} /> New PO
+            <Plus size={16} /> New Purchase Order
           </button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input className="input pl-9" placeholder="Search PO number…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+        <div className="ds-proc-search relative flex-1 min-w-[240px] max-w-sm">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input className="input pl-9" aria-label="Search purchase orders" placeholder="Search PO number…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <select className="input max-w-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
@@ -513,9 +515,11 @@ export default function PurchasesPage() {
                   </tr>
                 ))
               ) : total === 0 ? (
-                <tr><td colSpan={8} className="px-5 py-12 text-center">
-                  <Truck size={32} className="mx-auto mb-2 text-slate-600" />
-                  <p className="text-slate-500">No purchase orders yet</p>
+                <tr><td colSpan={8} className="p-4">
+                  <div className="ds-empty">
+                    <Truck size={32} aria-hidden="true" />
+                    <p>No Purchase Orders Yet</p>
+                  </div>
                 </td></tr>
               ) : (
                 paged.map((o) => (
@@ -588,8 +592,8 @@ export default function PurchasesPage() {
                         {(o.status === 'received' || o.status === 'partially_received') && (
                           <button
                             onClick={() => openReturnModal(o)}
-                            className="text-slate-400 hover:text-amber-400 transition-colors"
-                            title="Return goods to supplier"
+                            className="text-slate-400 hover:text-brand-400 transition-colors"
+                            title="Return goods to supplier" aria-label="Return goods to supplier"
                           >
                             <RotateCcw size={14} />
                           </button>

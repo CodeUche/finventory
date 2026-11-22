@@ -341,25 +341,22 @@ class CogsNotSilentlyDroppedTests(TestCase):
         self.assertEqual(bal(self.org, "5001"), D("60"))
         self.assertEqual(bal(self.org, "1200"), D("-60"))
 
-    def test_unmapped_cogs_posts_revenue_and_flags_only_the_missing_cost(self):
-        from apps.sales.models import Invoice
+    # 0.4.0 posts a sale (revenue, VAT, cash/AR, cost of sales) as ONE entry, all or nothing
+    # (apps.sales.ledger). The earlier "revenue first, cost flagged" two-journal behaviour of
+    # the numbers branch is gone: a sale with an unmapped cost account posts NOTHING and is
+    # flagged, so the books never carry revenue without its cost.
+    def test_unmapped_cogs_posts_nothing_and_flags_the_invoice(self):
         self._unmap("cogs_account")
         inv = self._sell()
         inv.refresh_from_db()
-        self.assertTrue(Invoice.objects.filter(id=inv.id).exists())       # the sale itself went through
         self.assertEqual(inv.gl_post_status, "not_configured")
         self.assertIn("cogs_account", inv.gl_post_error)
-        # The money side is in the books: customer paid cash 200 for revenue 200.
-        self.assertEqual(bal(self.org, "4001"), D("200"))
-        self.assertEqual(AccountingService._ledger_balance(
-            AccountMappingService.resolve(self.org, "cash_account")), D("200"))
-        # ... the cost side is not, and says so.
+        self.assertEqual(bal(self.org, "4001"), ZERO)       # no revenue without its cost
         self.assertEqual(bal(self.org, "5001"), ZERO)
-        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").exists())
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type__in=("sale", "sale_cogs")).exists())
         health = AccountingService.get_gl_health(self.org)
         self.assertTrue(any(f["model"] == "invoice" and f["id"] == str(inv.id) for f in health["failures"]))
         self.assertEqual(health["cogs_missing_invoices"], 1)
-        self.assertEqual(AccountingService.balance_sheet(self.org)["cogs_missing_invoices"], 1)
 
     def test_unmapped_inventory_account_is_flagged_too(self):
         self._unmap("inventory_account")
@@ -367,13 +364,12 @@ class CogsNotSilentlyDroppedTests(TestCase):
         inv.refresh_from_db()
         self.assertEqual(inv.gl_post_status, "not_configured")
         self.assertIn("inventory_account", inv.gl_post_error)
-        self.assertEqual(bal(self.org, "4001"), D("200"))
+        self.assertEqual(bal(self.org, "4001"), ZERO)
         self.assertEqual(AccountingService.cogs_missing_count(self.org), 1)
 
-    def test_retry_posts_only_the_missing_cogs_journal(self):
+    def test_retry_posts_the_whole_sale_once_the_mapping_is_fixed(self):
         self._unmap("cogs_account")
         inv = self._sell()
-        revenue_entry = JournalEntry.objects.get(organisation=self.org, source_type="sale")
         m = AccountMapping.objects.get(organisation=self.org)
         m.cogs_account = acct(self.org, "5001")
         m.save()
@@ -382,30 +378,23 @@ class CogsNotSilentlyDroppedTests(TestCase):
         inv.refresh_from_db()
         self.assertEqual(inv.gl_post_status, "posted")
         self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale").count(), 1)
-        self.assertEqual(JournalEntry.objects.get(organisation=self.org, source_type="sale").id, revenue_entry.id)
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").count(), 1)
-        self.assertEqual(bal(self.org, "4001"), D("200"))     # not doubled
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").exists())
+        self.assertEqual(bal(self.org, "4001"), D("200"))
         self.assertEqual(bal(self.org, "5001"), D("60"))
         self.assertEqual(bal(self.org, "1200"), D("-60"))
         self.assertEqual(AccountingService.cogs_missing_count(self.org), 0)
-        # A second retry changes nothing.
-        AccountingService.retry_gl_post(self.org, "invoice", str(inv.id), self.user)
+        AccountingService.retry_gl_post(self.org, "invoice", str(inv.id), self.user)   # a second retry changes nothing
+        self.assertEqual(bal(self.org, "4001"), D("200"))
         self.assertEqual(bal(self.org, "5001"), D("60"))
 
-    def test_a_sale_posted_with_cogs_inside_the_sale_entry_is_not_given_a_second_cogs(self):
-        """Old-style invoice (cost inside the 'sale' entry): retry must not add cost again."""
+    def test_the_cost_lives_inside_the_sale_entry_and_a_retry_never_adds_a_second_one(self):
         inv = self._sell()
         sale = JournalEntry.objects.get(organisation=self.org, source_type="sale")
-        cogs = JournalEntry.objects.get(organisation=self.org, source_type="sale_cogs")
-        # Rebuild the old shape: one 'sale' entry holding the cost lines too.
-        for ln in cogs.lines.all():
-            JournalLine.objects.create(journal_entry=sale, account=ln.account, debit=ln.debit, credit=ln.credit)
-        # The ledger is immutable, so model 'no separate cost journal' by retyping it.
-        JournalEntry.objects.filter(id=cogs.id).update(source_type="legacy_note")
-        before = bal(self.org, "5001")
+        self.assertTrue(sale.lines.filter(account__code="5001", debit=D("60")).exists())
         AccountingService.retry_gl_post(self.org, "invoice", str(inv.id), self.user)
-        self.assertEqual(bal(self.org, "5001"), before)
-        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").exists())
+        self.assertEqual(bal(self.org, "5001"), D("60"))
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale").count(), 1)
+        self.assertTrue(AccountingService.sale_cogs_posted(self.org, inv))
 
     def test_voiding_a_sale_whose_cost_never_posted_does_not_reverse_a_cost(self):
         from apps.sales.services import SaleService
@@ -895,7 +884,9 @@ class StockedBillLineTests(TestCase):
         self.assertEqual(self._stock(), ZERO)
         # Revenue 1,500 (no VAT on this sale) less COGS 1,000 = profit 500.
         self.assertEqual(bal(self.org, "4001") - bal(self.org, "5001") - bal(self.org, "6700"), D("500"))
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").count(), 1)
+        # 0.4.0: the cost sits inside the one sale entry, not in a journal of its own
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").count(), 0)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale").count(), 1)
 
     def test_service_and_unlinked_lines_stay_expensed_and_mixed_bill_splits_by_line(self):
         self._bill([

@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { onAccent } from '@/lib/contrast'
 import { useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle, Check, Loader2, Minus, Plus, ShoppingBag, Store, X,
@@ -25,6 +26,10 @@ const money = (currency: string, value: number | string) => {
   const symbol = currency === 'NGN' ? '₦' : ''
   return `${symbol}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+
+// The shop is always a light page, whatever theme the app is in. The app's global field
+// style makes inputs dark in the dark theme, so the shop sets its own light fill and text.
+const SHOP_FIELD = { backgroundColor: '#FFFFFF', color: '#111111', borderColor: '#A9A9B0' } as const
 
 export default function StorefrontPage() {
   const { slug = '', table } = useParams()
@@ -202,8 +207,8 @@ export default function StorefrontPage() {
             <a
               href={`https://wa.me/${shop.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(`Hello, my order reference is ${placed.reference}`)}`}
               target="_blank" rel="noreferrer"
-              className="mt-4 block rounded-xl py-3 text-sm font-semibold text-white"
-              style={{ background: accent }}
+              className="mt-4 block rounded-xl py-3 text-sm font-semibold"
+              style={{ background: accent, color: onAccent(accent) }}
             >
               Message {shop.name}
             </a>
@@ -218,14 +223,14 @@ export default function StorefrontPage() {
 
   // ── Shop ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="shop-light min-h-screen bg-white text-slate-900">
       <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
         {shop.logo
           ? <img src={shop.logo} alt="" className="h-9 w-9 rounded-lg object-cover" />
           : (
             <div
-              className="flex h-9 w-9 items-center justify-center rounded-lg font-bold text-white"
-              style={{ background: accent }}
+              className="flex h-9 w-9 items-center justify-center rounded-lg font-bold"
+              style={{ background: accent, color: onAccent(accent) }}
             >
               {shop.name.charAt(0)}
             </div>
@@ -238,8 +243,8 @@ export default function StorefrontPage() {
         </div>
         <button
           onClick={() => setShowBasket(true)}
-          className="ml-auto flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white"
-          style={{ background: accent }}
+          className="ml-auto flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
+          style={{ background: accent, color: onAccent(accent) }}
         >
           <ShoppingBag size={15} /> {count > 0 ? count : 'Basket'}
         </button>
@@ -259,7 +264,7 @@ export default function StorefrontPage() {
               key={c} onClick={() => setCategory(c)}
               className="whitespace-nowrap rounded-full border px-3.5 py-1.5 text-sm"
               style={category === c
-                ? { background: accent, borderColor: accent, color: '#fff' }
+                ? { background: accent, borderColor: accent, color: onAccent(accent) }
                 : { borderColor: '#e2e8f0', color: '#475569' }}
             >
               {c}
@@ -271,7 +276,7 @@ export default function StorefrontPage() {
       <main className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4">
         {shown.map((p) => (
           <article key={p.id} className="overflow-hidden rounded-xl border border-slate-200">
-            <div className="flex h-24 items-center justify-center bg-slate-100 text-xs uppercase tracking-widest text-slate-400">
+            <div className="flex h-24 items-center justify-center bg-slate-100 text-xs uppercase tracking-widest text-slate-600">
               {p.image ? <img src={p.image} alt="" className="h-full w-full object-cover" /> : p.name.slice(0, 12)}
             </div>
             <div className="p-3">
@@ -330,12 +335,12 @@ export default function StorefrontPage() {
               {lines.length > 0 && (
                 <div className="space-y-2 py-4">
                   <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                     placeholder="Your name" value={form.customer_name}
                     onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
                   />
                   <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                     placeholder="Phone number" inputMode="tel" value={form.customer_phone}
                     onChange={(e) => setForm({ ...form, customer_phone: e.target.value })}
                   />
@@ -346,7 +351,7 @@ export default function StorefrontPage() {
                           key={f} onClick={() => setForm({ ...form, fulfilment: f })}
                           className="flex-1 rounded-lg border py-2 text-sm capitalize"
                           style={form.fulfilment === f
-                            ? { background: accent, borderColor: accent, color: '#fff' }
+                            ? { background: accent, borderColor: accent, color: onAccent(accent) }
                             : { borderColor: '#e2e8f0', color: '#475569' }}
                         >
                           {f}
@@ -356,14 +361,14 @@ export default function StorefrontPage() {
                   )}
                   {form.fulfilment === 'delivery' && (
                     <textarea
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                       rows={2} placeholder="Where should we deliver?"
                       value={form.delivery_address}
                       onChange={(e) => setForm({ ...form, delivery_address: e.target.value })}
                     />
                   )}
                   <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                     placeholder="Anything we should know? (optional)" value={form.note}
                     onChange={(e) => setForm({ ...form, note: e.target.value })}
                   />

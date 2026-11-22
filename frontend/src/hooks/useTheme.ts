@@ -21,7 +21,7 @@ export function useThemeAccent(): string {
     window.addEventListener('themechange', handler)
     return () => window.removeEventListener('themechange', handler)
   }, [])
-  return light ? '#1C2F5C' : '#D4A017'
+  return light ? '#1558EA' : '#A499FF'
 }
 
 function applyTheme(theme: Theme) {

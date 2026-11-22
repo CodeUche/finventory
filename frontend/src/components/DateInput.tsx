@@ -105,8 +105,15 @@ export default function DateInput({
     hiddenRef.current?.click()
   }
 
+  // Callers often pass "input py-1.5 text-sm w-32". The box styling ("input") belongs to the
+  // inner field only; on the wrapper it drew a second border and hid the placeholder.
+  // Padding and text-size tokens go to the inner field, the rest (width etc.) stays outside.
+  const tokens = className.split(/\s+/).filter(Boolean)
+  const innerTokens = tokens.filter((t) => /^(py|text)-/.test(t))
+  const wrapperClass = tokens.filter((t) => t !== 'input' && !/^(py|text)-/.test(t)).join(' ')
+
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative shrink-0 ${wrapperClass}`}>
       <input
         id={id}
         name={name}
@@ -118,7 +125,7 @@ export default function DateInput({
         disabled={disabled}
         required={required}
         maxLength={10}
-        className="input pr-10"
+        className={`input pr-10 ${innerTokens.join(' ')}`}
         autoComplete="off"
       />
       <button

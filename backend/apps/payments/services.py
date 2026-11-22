@@ -57,9 +57,15 @@ class PaymentService:
             getattr(customer, "email", "") or "",
         )
 
+    @staticmethod
+    def _assert_payable(invoice):
+        if invoice.status in ("voided", "returned", "draft"):
+            raise PaymentProviderError(f"This invoice is {invoice.status} and cannot be paid.")
+
     # ── Hosted checkout ─────────────────────────────────────────────────────
     @staticmethod
     def create_payment_link(invoice, config=None, callback_url="") -> PaymentLink:
+        PaymentService._assert_payable(invoice)
         config = config or PaymentService.active_config(invoice.organisation)
         if not config.allow_card:
             raise PaymentProviderError("Card payments are switched off for this business.")
@@ -97,6 +103,7 @@ class PaymentService:
     # ── One-time account number ─────────────────────────────────────────────
     @staticmethod
     def create_virtual_account(invoice, config=None) -> VirtualAccount:
+        PaymentService._assert_payable(invoice)
         config = config or PaymentService.active_config(invoice.organisation)
         if not config.allow_transfer:
             raise PaymentProviderError("Bank transfers are switched off for this business.")
@@ -219,6 +226,15 @@ class PaymentService:
         if amount <= 0:
             return note("zero amount")
 
+        # The money has already left the payer. If the sale can no longer take
+        # it (voided, returned), park it for a person instead of dropping it or
+        # pretending it was applied -- and never raise back to the webhook.
+        from apps.sales.models import Invoice as _Invoice
+        if invoice.status in (_Invoice.Status.VOIDED, _Invoice.Status.RETURNED, _Invoice.Status.DRAFT):
+            return note(f"invoice is {invoice.status} — payment of {amount} received, needs review (refund or re-apply)")
+        if target.status == "cancelled":
+            return note(f"payment of {amount} arrived on a cancelled request — needs review")
+
         # Never credit more than is outstanding — a provider can notify twice
         # under different event ids after a genuine retry on their side.
         outstanding = Decimal(str(invoice.amount_due or 0))
@@ -230,13 +246,21 @@ class PaymentService:
         applied = min(amount, outstanding)
 
         from apps.sales.services import SaleService
-        SaleService.record_payment_from_gateway(
-            invoice=invoice,
-            amount=applied,
-            reference=event.reference or event.provider_reference,
-            channel=event.channel or "bank_transfer",
-            provider=provider_slug,
-        )
+        try:
+            # its own savepoint: a failed posting rolls back cleanly and the
+            # event log row (already written) survives as the unapplied receipt
+            with transaction.atomic():
+                SaleService.record_payment_from_gateway(
+                    invoice=invoice,
+                    amount=applied,
+                    reference=event.reference or event.provider_reference,
+                    channel=event.channel or "bank_transfer",
+                    provider=provider_slug,
+                )
+        except Exception as exc:
+            logger.error("Gateway payment of %s for %s could not be applied: %s",
+                         applied, invoice.invoice_number, exc, exc_info=True)
+            return note(f"could not apply payment of {applied} — needs review: {type(exc).__name__}"[:300])
 
         target.status = "paid"
         target.paid_at = timezone.now()

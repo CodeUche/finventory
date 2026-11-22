@@ -268,7 +268,7 @@ export default function JournalPage() {
 
       {/* Info banner */}
       <div className="rounded-xl border border-slate-700/50 bg-surface-800/40 px-4 py-3 text-xs text-slate-400 flex items-start gap-2">
-        <span className="text-amber-400 mt-0.5">ℹ</span>
+        <span className="text-brand-400 mt-0.5">ℹ</span>
         <span>
           <strong className="text-slate-300">Draft</strong> entries can be edited or deleted.
           <strong className="text-slate-300"> Posted</strong> entries are locked — use <strong className="text-slate-300">Reverse</strong> to create a correcting entry (accounting best practice).
@@ -414,7 +414,7 @@ export default function JournalPage() {
                               onClick={() => handleReverse(e)}
                               disabled={actionLoading === e.id + '-reverse'}
                               title="Create reversing entry"
-                              className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors flex items-center gap-1 disabled:opacity-50"
+                              className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors flex items-center gap-1 disabled:opacity-50"
                             >
                               {actionLoading === e.id + '-reverse'
                                 ? <Loader2 size={11} className="animate-spin" />

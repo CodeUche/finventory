@@ -343,7 +343,7 @@ export default function ImportPage() {
             </p>
             <p className="text-xs text-slate-300 font-mono leading-relaxed">{selected.columns}</p>
             {entity === 'products' && (
-              <p className="text-xs text-indigo-400/80 mt-1.5">
+              <p className="text-xs text-indigo-300 mt-1.5">
                 <Sparkles size={11} className="inline mr-1" />
                 Your CSV can use any column names — AI will match "Retail Price" → selling_price, "Product Name" → name, etc.
               </p>
@@ -550,11 +550,11 @@ export default function ImportPage() {
               </div>
             </div>
             {result.warehouses_created !== undefined && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 flex items-center gap-3">
-                <CheckCircle size={20} className="text-amber-400" />
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-emerald-400" />
                 <div>
                   <p className="text-xs text-slate-400">Warehouses</p>
-                  <p className="text-xl font-bold text-amber-400">{result.warehouses_created}</p>
+                  <p className="text-xl font-bold text-emerald-400">{result.warehouses_created}</p>
                 </div>
               </div>
             )}

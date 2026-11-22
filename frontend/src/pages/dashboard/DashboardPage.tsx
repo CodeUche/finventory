@@ -201,7 +201,7 @@ function HealthRatioStrip({
   return (
     <div className="ad-ratios">
       {ratios.map((r, i) => (
-        <div key={r.label} className={`ad-ratio t${i}`}>
+        <div key={r.label} className={`ad-ratio ${i < 2 ? `t${i}` : `s-${r.status}`}`}>
           <p className="lab">{r.label}</p>
           <p className={`val ${r.status}`}>{r.value}</p>
           <p className="note">{r.note}</p>

@@ -40,6 +40,9 @@ def _date_filter(qs, field: str, date_from: Optional[date], date_to: Optional[da
 POSTED_SALE_STATUSES = ["paid", "confirmed", "partially_paid", "credit", "overdue", "returned"]
 
 
+from django.utils import timezone
+
+
 class ReportService:
 
     # ─── Sales Reports ────────────────────────────────────────────────────────
@@ -540,7 +543,7 @@ class ReportService:
         from datetime import date as _date
         from apps.sales.models import Invoice
 
-        as_of = as_of or _date.today()
+        as_of = as_of or timezone.localdate()
         invoices = Invoice.objects.filter(
             organisation=organisation,
             status__in=["confirmed", "credit", "partially_paid", "overdue"],
@@ -598,7 +601,7 @@ class ReportService:
         from datetime import date as _date
         from apps.bills.models import Bill
 
-        as_of = as_of or _date.today()
+        as_of = as_of or timezone.localdate()
         bills = Bill.objects.filter(
             organisation=organisation,
             status__in=["approved", "received", "partially_paid", "overdue"],

@@ -14,7 +14,8 @@
  */
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
-import { X, AlertTriangle } from 'lucide-react'
+import { X } from 'lucide-react'
+import { useEscapeLayer } from '@/lib/escapeStack'
 
 type Kind = 'confirm' | 'prompt' | 'alert'
 
@@ -47,6 +48,8 @@ const useDialogStore = create<DialogStore>((set) => ({
 
 let _id = 0
 const DANGER_RE = /\b(delete|remove|revoke|void|cancel|deactivate|discard|permanent|clear all|reject|unlink|purge)\b/i
+// The action word shown on the red button ("Delete", "Remove", ...), taken from the question.
+const ACTION_RE = /\b(delete|remove|revoke|void|deactivate|discard|reject|unlink|purge)\b/i
 
 interface ConfirmOpts {
   title?: string
@@ -61,6 +64,14 @@ interface PromptOpts extends ConfirmOpts {
   multiline?: boolean
 }
 
+/** "Delete" on a delete question, "Confirm" otherwise (a prompt says "Save", an alert "OK"). */
+export function defaultConfirmText(kind: Kind, danger: boolean, text: string): string {
+  if (kind === 'alert') return 'OK'
+  if (kind === 'prompt') return 'Save'
+  const m = danger ? ACTION_RE.exec(text) : null
+  return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase() : 'Confirm'
+}
+
 function base(kind: Kind, message: string, opts: PromptOpts = {}): Promise<boolean | string | null> {
   // When no explicit title is given, use the first line of the message as the
   // heading and the rest as the body — many legacy confirm() strings pack a
@@ -72,15 +83,16 @@ function base(kind: Kind, message: string, opts: PromptOpts = {}): Promise<boole
     if (idx === -1) { title = message; body = undefined }
     else { title = message.slice(0, idx).trim(); body = message.slice(idx + 1).trim() || undefined }
   }
+  const danger = opts.danger ?? DANGER_RE.test(message + ' ' + (opts.title ?? ''))
   return new Promise((resolve) => {
     useDialogStore.getState().enqueue({
       id: ++_id,
       kind,
       title,
       message: body,
-      confirmText: opts.confirmText ?? (kind === 'alert' ? 'OK' : kind === 'prompt' ? 'Save' : 'Confirm'),
+      confirmText: opts.confirmText ?? defaultConfirmText(kind, danger, message + ' ' + (opts.title ?? '')),
       cancelText: opts.cancelText ?? 'Cancel',
-      danger: opts.danger ?? DANGER_RE.test(message + ' ' + (opts.title ?? '')),
+      danger,
       placeholder: opts.placeholder,
       defaultValue: opts.defaultValue,
       optional: opts.optional ?? true,
@@ -107,6 +119,13 @@ export function DialogHost() {
 
   useEffect(() => { setValue(current?.defaultValue ?? '') }, [current?.id])
 
+  // Escape closes the dialog as Cancel (one app-wide Escape handler; this dialog is always on top).
+  useEscapeLayer(!!current, () => {
+    if (!current) return
+    current.resolve(current.kind === 'prompt' ? null : false)
+    clear()
+  })
+
   if (!current) return null
 
   const finish = (result: boolean | string | null) => { current.resolve(result); clear() }
@@ -119,51 +138,46 @@ export function DialogHost() {
       finish(true)
     }
   }
-  const confirmClass = current.danger ? 'btn-danger' : 'btn-primary'
+  const titleId = `ds-dialog-title-${current.id}`
 
+  // One look for every confirm / delete / prompt (designer's Pop Up 58, 111, 121): the title and text
+  // are centred, Cancel is the outlined navy button, and a delete is the solid pink Delete.
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative card w-full max-w-md p-6 space-y-4">
-        <div className="flex items-start gap-3">
-          {current.danger && (
-            <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0 mt-0.5">
-              <AlertTriangle size={18} className="text-red-400" />
-            </div>
-          )}
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-white leading-snug">{current.title}</h2>
-            {current.message && <p className="text-sm text-slate-400 mt-1 leading-relaxed whitespace-pre-line">{current.message}</p>}
-          </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-white shrink-0"><X size={18} /></button>
-        </div>
+      <div className="relative ds-dialog" data-kit-skip="">
+        <button type="button" onClick={onCancel} className="ds-dialog-x" aria-label="Close"><X size={20} /></button>
+        <h2 id={titleId} className="ds-dialog-title">{current.title}</h2>
+        {current.message && <p className="ds-dialog-text">{current.message}</p>}
 
         {current.kind === 'prompt' && (
           current.multiline ? (
             <textarea
               className="input resize-none" rows={3} autoFocus placeholder={current.placeholder}
               value={value} onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onConfirm(); if (e.key === 'Escape') onCancel() }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onConfirm() }}
             />
           ) : (
             <input
               className="input" autoFocus placeholder={current.placeholder}
               value={value} onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(); if (e.key === 'Escape') onCancel() }}
+              onKeyDown={(e) => { if (e.key === 'Enter') onConfirm() }}
             />
           )
         )}
 
-        <div className="flex gap-3 pt-1">
+        <div className="ds-dialog-actions">
           {current.kind !== 'alert' && (
-            <button
-              className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm"
-              onClick={onCancel}
-            >
+            <button type="button" className="btn-secondary" data-kit-role="cancel" onClick={onCancel}>
               {current.cancelText}
             </button>
           )}
-          <button className={`${confirmClass} flex-1 py-2.5 justify-center`} onClick={onConfirm} autoFocus={current.kind === 'alert'}>
+          <button
+            type="button"
+            className={current.danger ? 'ds-btn-delete' : 'btn-primary'}
+            onClick={onConfirm}
+            autoFocus={current.kind === 'alert'}
+          >
             {current.confirmText}
           </button>
         </div>

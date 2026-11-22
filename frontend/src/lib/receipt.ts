@@ -7,7 +7,7 @@
  * shop is installed as a normal Windows/Android printer, so this reaches all of
  * them, including the printer built into a POS terminal.
  *
- * Six layouts share one data shape. The merchant picks one in
+ * Seven layouts share one data shape. The merchant picks one in
  * Settings → Templates and it applies to every receipt the app prints.
  */
 
@@ -15,6 +15,7 @@ export type ReceiptTemplate =
   | 'compact'
   | 'detailed'
   | 'branded'
+  | 'sales_receipt'
   | 'classic_cash'
   | 'shop_barcode'
   | 'stay_folio'
@@ -23,6 +24,7 @@ export const RECEIPT_TEMPLATES: { value: ReceiptTemplate; label: string; blurb: 
   { value: 'compact', label: 'Compact', blurb: 'Least paper per sale. For busy counters where the roll is a running cost.' },
   { value: 'detailed', label: 'Detailed', blurb: 'Full columns, tax breakdown, FIRS reference and a signature line.' },
   { value: 'branded', label: 'Branded', blurb: 'Logo leads, and you write the closing message.' },
+  { value: 'sales_receipt', label: 'Sales receipt', blurb: 'Big logo, Qty / Item / Price columns, discount lines, items sold, barcode and a footer with receipt number, date, time and cashier.' },
   { value: 'classic_cash', label: 'Classic cash', blurb: 'The corner-shop slip — centred heading, dashed rules.' },
   { value: 'shop_barcode', label: 'Shop & barcode', blurb: 'Dotted leaders and a scannable barcode, so returns are looked up by scanning.' },
   { value: 'stay_folio', label: 'Stay folio', blurb: 'Dated charge lines for hotels and anywhere a customer runs a tab.' },
@@ -33,6 +35,10 @@ export interface ReceiptLine {
   qty: number | string
   unit_price: number | string
   line_total: number | string
+  /** Discount taken off this line. Only set when the sale really carries one. */
+  discount?: number | string
+  /** Line amount before discount and VAT. The sales-receipt layout prints this in its Price column, so the discount rows beneath add up. */
+  gross_total?: number | string
   /** Chosen modifier names, e.g. ["Large", "Extra chicken"] — printed under the line. */
   modifiers?: string[]
   /** Charge date, used by the stay-folio layout. */
@@ -56,6 +62,8 @@ export interface ReceiptData {
   website?: string
   invoiceNumber: string
   date: string
+  /** Time of sale, e.g. "14:30". Printed beside the date when known. */
+  time?: string
   /** The signed-in user who recorded the sale. Printed above "Powered by Audity". */
   cashier?: string
   /** "Served by" at a till, "Raised by" for an invoice raised at a desk. */
@@ -65,7 +73,12 @@ export interface ReceiptData {
   lines: ReceiptLine[]
   subtotal: number | string
   tax?: number | string
+  /** Total discount on the sale (line discounts plus any whole-sale discount). */
   discount?: number | string
+  /** VAT already inside the prices (VAT-inclusive items). `tax` still holds all VAT; this part is shown as information, not added. */
+  taxIncluded?: number | string
+  /** Discount taken off the whole sale rather than a line. Only set when real. */
+  transactionDiscount?: number | string
   total: number | string
   payments?: ReceiptPayment[]
   amountTendered?: number | string
@@ -112,6 +125,60 @@ const escape = (s: string) =>
 /** Address is a free-text block in the profile — keep the merchant's own line breaks. */
 const addressLines = (a?: string) =>
   String(a ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+
+/** "18/08/2026 14:30" when the time is known, otherwise just the date. */
+const when = (d: ReceiptData) => d.time ? `${d.date} ${d.time}` : d.date
+
+/** Clock time (24h) for a receipt, from an ISO timestamp. Empty if it cannot be read. */
+export function formatReceiptTime(iso?: string | null): string {
+  if (!iso) return ''
+  const t = new Date(iso)
+  if (isNaN(t.getTime())) return ''
+  return t.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+}
+
+// Discount sums are done in whole kobo so 0.1 + 0.2 style drift never shows.
+const kobo = (v: number | string | undefined): number => Math.round(Number(v || 0) * 100)
+const lineDiscountKobo = (d: ReceiptData) => d.lines.reduce((a, l) => a + kobo(l.discount), 0)
+/** Total discount to show: the sale's own figure, else the sum of its line discounts. */
+const discountTotalKobo = (d: ReceiptData) =>
+  kobo(d.discount) || (lineDiscountKobo(d) + kobo(d.transactionDiscount))
+
+/** VAT that is added on top of the prices — the only VAT that belongs in the arithmetic. */
+const vatAddedKobo = (d: ReceiptData) => Math.max(0, kobo(d.tax) - kobo(d.taxIncluded))
+/** VAT that is already inside the prices. Shown for information, never added. */
+const vatIncludedKobo = (d: ReceiptData) => Math.max(0, kobo(d.taxIncluded))
+
+/**
+ * Turn a saved invoice's lines into receipt lines, the way the original sale
+ * printed them: Price column = qty x unit price (before discount), plus the
+ * line discount, and the VAT that sits inside VAT-inclusive prices.
+ * A line is VAT-inclusive when it carries VAT yet its saved total is just
+ * price less discount (nothing was added on top).
+ */
+export function invoiceItemsToReceipt(items: {
+  product_name: string; quantity: string | number; unit_price: string | number
+  line_total: string | number; discount_amount?: string | number; tax_amount?: string | number
+  modifiers?: { name: string }[]
+}[]): { lines: ReceiptLine[]; taxIncluded: number } {
+  let incK = 0
+  const lines = items.map((it) => {
+    const grossK = Math.round(Number(it.unit_price || 0) * 100 * Number(it.quantity || 0))
+    const discK = kobo(it.discount_amount)
+    const taxK = kobo(it.tax_amount)
+    if (taxK > 0 && kobo(it.line_total) === grossK - discK) incK += taxK
+    return {
+      name: it.product_name,
+      qty: it.quantity,
+      unit_price: it.unit_price,
+      line_total: it.line_total,
+      gross_total: (grossK / 100).toFixed(2),
+      discount: discK > 0 ? (discK / 100).toFixed(2) : undefined,
+      modifiers: it.modifiers?.map((m) => m.name),
+    }
+  })
+  return { lines, taxIncluded: incK / 100 }
+}
 
 const TENDER_LABEL: Record<string, string> = {
   cash: 'Cash',
@@ -175,14 +242,14 @@ export function code128Svg(text: string, height = 34): string {
 
 // ── Mono logo ────────────────────────────────────────────────────────────────
 /**
- * Convert a logo to 1-bit black-and-white sized for an 80mm roll.
+ * Convert a logo to 1-bit black-and-white sized for an 80mm roll (about 480 dots wide, so a big centred logo stays crisp).
  *
  * A thermal head has no greys: it either burns a dot or it does not. Sending a
  * colour or photographic logo straight through prints a dark smear, so every
  * pixel is thresholded to solid black or dropped to white here, at roll width
  * rather than scaled down from whatever the merchant uploaded for A4.
  */
-export function toMonoDataUrl(src: string, maxWidth = 180): Promise<string | null> {
+export function toMonoDataUrl(src: string, maxWidth = 480): Promise<string | null> {
   return new Promise((resolve) => {
     if (!src) { resolve(null); return }
     const img = new Image()
@@ -229,8 +296,16 @@ export function toMonoDataUrl(src: string, maxWidth = 180): Promise<string | nul
 }
 
 // ── Shared blocks ────────────────────────────────────────────────────────────
+/** The logo is the first thing on the slip. No logo means no element at all, so no empty gap. */
+/** Only a plain base64 png/jpeg/webp picture may go into an <img src>. Anything else (a quote, a script,
+ *  an svg) would be written into the page as it is, so it is dropped. */
+export const safeLogoDataUrl = (u: string | null | undefined): string =>
+  u && /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(u) ? u : ''
+export const safeBase64 = (u: string | null | undefined): string =>
+  u && /^[A-Za-z0-9+/=]+$/.test(u) ? u : ''
+
 const logoImg = (d: ReceiptData, cls = '') =>
-  d.logoDataUrl ? `<img class="logo ${cls}" src="${d.logoDataUrl}" alt="">` : ''
+  safeLogoDataUrl(d.logoDataUrl) ? `<img class="logo ${cls}" src="${safeLogoDataUrl(d.logoDataUrl)}" alt="">` : ''
 
 const addressBlock = (d: ReceiptData) =>
   addressLines(d.address).map((l) => `<div class="c small">${escape(l)}</div>`).join('')
@@ -265,12 +340,23 @@ const leaderLines = (d: ReceiptData) => d.lines.map((l) => `
   <div class="lead"><span>${escape(l.name)}</span><span class="fill"></span><span class="amt">${money(l.line_total)}</span></div>
   <div class="small ind">${qtyFmt(l.qty)} × ${money(l.unit_price)}</div>`).join('')
 
+/** Numbered leaders, as on the shop slip: "1. Item ..... 1,200". */
+const numberedLeaders = (d: ReceiptData) => d.lines.map((l, i) => `
+  <div class="lead"><span>${i + 1}.${escape(l.name)}</span><span class="fill"></span><span class="amt">${money(l.line_total)}</span></div>
+  <div class="small ind">${qtyFmt(l.qty)} × ${money(l.unit_price)}</div>`).join('')
+
+/** Plain two-column list: description left, price right. */
+const plainLines = (d: ReceiptData) => d.lines.map((l) => `
+  <tr><td>${qtyFmt(l.qty)} × ${escape(l.name)}</td><td class="amt">${money(l.line_total)}</td></tr>
+  ${l.modifiers?.length ? `<tr><td class="mod" colspan="2">${escape(l.modifiers.join(', '))}</td></tr>` : ''}`).join('')
+
 const totalsBlock = (d: ReceiptData, totalLabel = 'TOTAL') => `
   <table>
     <tr><td>Subtotal</td><td class="amt">${money(d.subtotal)}</td></tr>
     ${Number(d.discount || 0) ? `<tr><td>Discount</td><td class="amt">-${money(d.discount!)}</td></tr>` : ''}
-    ${Number(d.tax || 0) ? `<tr><td>VAT</td><td class="amt">${money(d.tax!)}</td></tr>` : ''}
+    ${vatAddedKobo(d) ? `<tr><td>VAT</td><td class="amt">${money(vatAddedKobo(d) / 100)}</td></tr>` : ''}
     <tr class="tot"><td>${totalLabel}</td><td class="amt">${money(d.total)}</td></tr>
+    ${vatIncludedRow(d)}
   </table>`
 
 const paymentsBlock = (d: ReceiptData) => {
@@ -285,27 +371,41 @@ const paymentsBlock = (d: ReceiptData) => {
 
 const firsBlock = (d: ReceiptData) => [
   d.firsIrn ? `<div class="rule"></div><div class="c small">FIRS IRN: ${escape(d.firsIrn)}</div>` : '',
-  d.qrCodeBase64 ? `<img class="qr" src="data:image/png;base64,${d.qrCodeBase64}" alt="">` : '',
+  safeBase64(d.qrCodeBase64) ? `<img class="qr" src="data:image/png;base64,${safeBase64(d.qrCodeBase64)}" alt="">` : '',
 ].join('')
+
+/** "YOU SAVED 500" — only when the sale really carries a discount. */
+const savedBlock = (d: ReceiptData) => {
+  const k = discountTotalKobo(d)
+  return k > 0 ? `<div class="c b lg saved">YOU SAVED ${money(k / 100)}</div>` : ''
+}
+
+/** Informational row: VAT already inside the prices, so it is not part of the sum above it. */
+const vatIncludedRow = (d: ReceiptData) =>
+  vatIncludedKobo(d) ? `<tr class="inc"><td>VAT included in total</td><td class="amt">${money(vatIncludedKobo(d) / 100)}</td></tr>` : ''
+
+const paidByCard = (d: ReceiptData) =>
+  (d.payments ?? []).some((p) => p.method === 'pos' || p.method === 'card')
 
 /**
  * Closing block. The person who recorded the sale is named here, directly above
  * "Powered by Audity", rather than in the header — it is provenance, and it
- * belongs with the sign-off.
+ * belongs with the sign-off. Layouts that already name the cashier in their
+ * header pass `skipCashier` so the name is never printed twice.
  */
-const signOff = (d: ReceiptData, thanks?: string) => `
+const signOff = (d: ReceiptData, thanks?: string, skipCashier = false) => `
   <div class="rule"></div>
   ${thanks ? `<div class="c small">${escape(thanks)}</div>` : ''}
-  ${d.cashier ? `<div class="c small">${escape(d.cashierLabel || 'Served by')} ${escape(d.cashier)}</div>` : ''}
+  ${!skipCashier && d.cashier ? `<div class="c small">${escape(d.cashierLabel || 'Served by')} ${escape(d.cashier)}</div>` : ''}
   <div class="c small">Powered by Audity</div>`
 
 // ── Template bodies ──────────────────────────────────────────────────────────
 function tplCompact(d: ReceiptData): string {
   return `
-  ${logoImg(d, 'sm')}
+  ${logoImg(d)}
   <div class="c b lg">${escape(d.merchant)}</div>
   ${addressBlock(d)}
-  <div class="c small">${escape(d.invoiceNumber)} · ${escape(d.date)}</div>
+  <div class="c small">${escape(d.invoiceNumber)} · ${escape(when(d))}</div>
   <div class="rule"></div>
   ${leaderLines(d)}
   <div class="rule"></div>
@@ -321,7 +421,7 @@ function tplDetailed(d: ReceiptData): string {
     d.tin ? `TIN ${escape(d.tin)}` : '',
   ].filter(Boolean).join(' · ')
   return `
-  ${logoImg(d, 'sm')}
+  ${logoImg(d)}
   <div class="c b lg">${escape(d.merchant)}</div>
   ${idLine ? `<div class="c small">${idLine}</div>` : ''}
   ${addressBlock(d)}
@@ -329,7 +429,7 @@ function tplDetailed(d: ReceiptData): string {
   <div class="solid"></div>
   <table>
     <tr><td>Receipt</td><td class="amt b">${escape(d.invoiceNumber)}</td></tr>
-    <tr><td>Date</td><td class="amt">${escape(d.date)}</td></tr>
+    <tr><td>Date</td><td class="amt">${escape(when(d))}</td></tr>
     ${d.customer ? `<tr><td>Customer</td><td class="amt">${escape(d.customer)}</td></tr>` : ''}
     ${d.customerTin ? `<tr><td>Customer TIN</td><td class="amt">${escape(d.customerTin)}</td></tr>` : ''}
   </table>
@@ -357,7 +457,7 @@ function tplBranded(d: ReceiptData): string {
   <div class="thick"></div>
   <table>
     <tr><td>Receipt</td><td class="amt b">${escape(d.invoiceNumber)}</td></tr>
-    <tr><td>Date</td><td class="amt">${escape(d.date)}</td></tr>
+    <tr><td>Date</td><td class="amt">${escape(when(d))}</td></tr>
     ${d.customer ? `<tr><td>Customer</td><td class="amt">${escape(d.customer)}</td></tr>` : ''}
   </table>
   <div class="rule"></div>
@@ -369,88 +469,166 @@ function tplBranded(d: ReceiptData): string {
   <table>
     <tr><td>Subtotal</td><td class="amt">${money(d.subtotal)}</td></tr>
     ${Number(d.discount || 0) ? `<tr><td>Discount</td><td class="amt">-${money(d.discount!)}</td></tr>` : ''}
-    ${Number(d.tax || 0) ? `<tr><td>VAT</td><td class="amt">${money(d.tax!)}</td></tr>` : ''}
+    ${vatAddedKobo(d) ? `<tr><td>VAT</td><td class="amt">${money(vatAddedKobo(d) / 100)}</td></tr>` : ''}
   </table>
   <div class="thick"></div>
-  <table><tr class="tot"><td>TOTAL</td><td class="amt">${money(d.total)}</td></tr></table>
+  <table><tr class="tot"><td>TOTAL</td><td class="amt">${money(d.total)}</td></tr>${vatIncludedRow(d)}</table>
   <div class="thick"></div>
   ${paymentsBlock(d)}
   ${firsBlock(d)}
   ${d.footerNote ? `<div class="c small note">${escape(d.footerNote)}</div>` : ''}
+  ${d.website ? `<div class="c b lg feedback">How did we do?</div><div class="c small">Visit ${escape(d.website)} and tell us about your visit</div>` : ''}
   ${signOff(d, 'Thank you for your patronage')}`
 }
 
-function tplClassicCash(d: ReceiptData): string {
+/** Modelled on the "SALES RECEIPT" till slip: big logo, Qty / Item / Price, discount rows, barcode, footer line. */
+function tplSalesReceipt(d: ReceiptData): string {
+  const bc = code128Svg(d.invoiceNumber)
+  const lineK = lineDiscountKobo(d)
+  const txK = kobo(d.transactionDiscount)
+  const totK = discountTotalKobo(d)
+  const items = d.lines.reduce((a, l) => a + (Number(l.qty) || 0), 0)
+
+  const rows = d.lines.map((l) => `
+    <tr>
+      <td class="q">${qtyFmt(l.qty)}x</td>
+      <td class="nm4s">${escape(l.name)}</td>
+      <td class="amt">${money(l.gross_total ?? l.line_total)}</td>
+    </tr>
+    ${l.modifiers?.length ? `<tr><td></td><td class="mod" colspan="2">${escape(l.modifiers.join(', '))}</td></tr>` : ''}
+    ${kobo(l.discount) ? `<tr class="dsc"><td class="q">***</td><td>Line Discount</td><td class="amt">-${money(l.discount!)}</td></tr>` : ''}`).join('')
+
+  const discountRows = totK > 0 ? `
+    ${lineK > 0 ? `<tr><td>Line Discount:</td><td class="amt">-${money(lineK / 100)}</td></tr>` : ''}
+    ${txK > 0 ? `<tr><td>Transaction Discount:</td><td class="amt">-${money(txK / 100)}</td></tr>` : ''}
+    <tr class="b"><td>Discount Total:</td><td class="amt">-${money(totK / 100)}</td></tr>` : ''
+
+  const pay = (d.payments ?? []).map((p) =>
+    `<tr><td>${escape(TENDER_LABEL[p.method] ?? p.method)}</td><td class="amt">${money(p.amount)}</td></tr>`).join('')
+  const tendered = Number(d.amountTendered || 0) ? `
+    <tr><td>Tendered Total:</td><td class="amt">${money(d.amountTendered!)}</td></tr>
+    <tr><td>Change:</td><td class="amt">${money(d.change ?? 0)}</td></tr>` : ''
+
   return `
-  ${logoImg(d, 'sm')}
+  ${logoImg(d, 'xl')}
+  <div class="c b ${safeLogoDataUrl(d.logoDataUrl) ? '' : 'lg'}">${escape(d.merchant)}</div>
+  ${addressBlock(d)}
+  ${contactBlock(d)}
+  <div class="rule"></div>
+  <div class="c b xl2">SALES RECEIPT</div>
+  <div class="rule"></div>
+  <table>
+    <tr class="hdr"><th class="q">Qty</th><th>Item Description</th><th class="amt">Price</th></tr>
+    ${rows}
+  </table>
+  <div class="rule"></div>
+  <div class="c b small">${qtyFmt(items)}x Items Sold</div>
+  <div class="rule"></div>
+  <table class="roomy">
+    <tr class="b"><td>Sub Total:</td><td class="amt">${money(d.subtotal)}</td></tr>
+    ${discountRows}
+    ${vatAddedKobo(d) ? `<tr><td>VAT:</td><td class="amt">${money(vatAddedKobo(d) / 100)}</td></tr>` : ''}
+  </table>
+  <div class="rule"></div>
+  <table><tr class="tot"><td>Total:</td><td class="amt">${money(d.total)}</td></tr>${vatIncludedRow(d)}</table>
+  ${pay || tendered ? `<table class="roomy">${pay}${tendered}</table>` : ''}
+  ${d.customer ? `<div class="rule"></div><div class="small">Customer: ${escape(d.customer)}</div>` : ''}
+  ${firsBlock(d)}
+  <div class="rule"></div>
+  <div class="c b">${escape(d.footerNote || 'THANK YOU')}</div>
+  ${bc ? bc.replace('class="bc"', 'class="bc full"') : ''}
+  <div class="foot small">
+    <span>${escape(d.invoiceNumber)}</span><span>${escape(d.date)}${d.time ? ' ' + escape(d.time) : ''}</span>${d.cashier ? `<span>${escape(d.cashier)}</span>` : ''}
+  </div>
+  <div class="c small">Powered by Audity</div>`
+}
+
+/** "CASH RECEIPT" slip: heading, shop / date / manager, description and price, tax and total. */
+function tplClassicCash(d: ReceiptData): string {
+  const sign = paidByCard(d)
+  return `
+  ${logoImg(d)}
   <div class="c b lg sp">CASH RECEIPT</div>
   <div class="rule"></div>
   <table>
-    <tr><td>Shop</td><td class="amt">${escape(d.merchant)}</td></tr>
-    <tr><td>Date</td><td class="amt">${escape(d.date)}</td></tr>
-    <tr><td>Receipt</td><td class="amt">${escape(d.invoiceNumber)}</td></tr>
-    ${d.customer ? `<tr><td>Customer</td><td class="amt">${escape(d.customer)}</td></tr>` : ''}
+    <tr><td>Shop Name:</td><td class="amt">${escape(d.merchant)}</td></tr>
+    <tr><td>Date:</td><td class="amt">${escape(when(d))}</td></tr>
+    <tr><td>Receipt:</td><td class="amt">${escape(d.invoiceNumber)}</td></tr>
+    ${d.cashier ? `<tr><td>${escape(d.cashierLabel || 'Served by')}:</td><td class="amt">${escape(d.cashier)}</td></tr>` : ''}
+    ${d.customer ? `<tr><td>Customer:</td><td class="amt">${escape(d.customer)}</td></tr>` : ''}
   </table>
-  ${addressLines(d.address).length ? `<div class="rule"></div>${addressBlock(d)}` : ''}
+  ${addressLines(d.address).length ? addressBlock(d) : ''}
   <div class="rule"></div>
   <table>
-    <tr class="hdr"><th>Item</th><th class="amt">Price</th><th class="amt">Total</th></tr>
-    ${stackedLines(d)}
+    <tr class="hdr"><th>Description</th><th class="amt">Price</th></tr>
+    ${plainLines(d)}
   </table>
   <div class="rule"></div>
   ${totalsBlock(d, 'Total')}
   ${paymentsBlock(d)}
   ${firsBlock(d)}
-  ${signOff(d, 'THANK YOU FOR SHOPPING!')}`
+  ${savedBlock(d)}
+  ${sign ? `<div class="small sig">CUSTOMER'S SIGNATURE REQUIRED</div><div class="sigline"></div>` : ''}
+  ${signOff(d, 'THANK YOU FOR SHOPPING!', true)}`
 }
 
+/** Big shop name, numbered lines with leaders, barcode, "Thank you for shopping". */
 function tplShopBarcode(d: ReceiptData): string {
   const bc = code128Svg(d.invoiceNumber)
   return `
-  ${logoImg(d, 'sm')}
-  <div class="c b lg">${escape(d.merchant)}</div>
+  ${logoImg(d)}
+  <div class="c b xl2">${escape(d.merchant)}</div>
   <div class="rule"></div>
   <table>
     <tr><td>Receipt :</td><td class="amt">${escape(d.invoiceNumber)}</td></tr>
-    <tr><td>Date :</td><td class="amt">${escape(d.date)}</td></tr>
+    ${d.cashier ? `<tr><td>${escape(d.cashierLabel || 'Served by')} :</td><td class="amt">${escape(d.cashier)}</td></tr>` : ''}
+    <tr><td>Date :</td><td class="amt">${escape(when(d))}</td></tr>
   </table>
   ${addressBlock(d)}
   ${d.customer ? `<div class="small">Client : ${escape(d.customer)}</div>` : ''}
   <div class="rule"></div>
-  ${leaderLines(d)}
+  ${numberedLeaders(d)}
   <div class="rule"></div>
   <div class="lead"><span>Subtotal</span><span class="fill"></span><span class="amt">${money(d.subtotal)}</span></div>
   ${Number(d.discount || 0) ? `<div class="lead"><span>Discount</span><span class="fill"></span><span class="amt">-${money(d.discount!)}</span></div>` : ''}
-  ${Number(d.tax || 0) ? `<div class="lead"><span>VAT</span><span class="fill"></span><span class="amt">${money(d.tax!)}</span></div>` : ''}
-  <div class="lead b tl"><span>TOTAL</span><span class="fill"></span><span class="amt">${money(d.total)}</span></div>
+  ${vatAddedKobo(d) ? `<div class="lead"><span>VAT</span><span class="fill"></span><span class="amt">${money(vatAddedKobo(d) / 100)}</span></div>` : ''}
+  <div class="lead b tl"><span>Total</span><span class="fill"></span><span class="amt">${money(d.total)}</span></div>
+  ${vatIncludedKobo(d) ? `<div class="small ind">VAT included in total: ${money(vatIncludedKobo(d) / 100)}</div>` : ''}
   ${paymentsBlock(d)}
   ${firsBlock(d)}
+  ${savedBlock(d)}
   ${bc ? `${bc}<div class="c small">${escape(d.invoiceNumber)}</div>` : ''}
-  ${signOff(d, 'THANK YOU FOR SHOPPING!')}`
+  ${d.website ? `<div class="c small">${escape(d.website)}</div>` : ''}
+  ${signOff(d, 'THANK YOU FOR SHOPPING!', true)}`
 }
 
+/** Hotel folio: name left, address right, Date / Ref / Description / Charges, boxed totals. */
 function tplStayFolio(d: ReceiptData): string {
   const rows = d.lines.map((l) => `
     <tr>
-      <td class="nm4">${escape(l.date || '')}</td>
-      <td>${escape(l.ref || '')}</td>
+      <td class="nm4f">${escape(l.date || '')}</td>
+      <td class="reff">${escape(l.ref || '')}</td>
+      <td>${escape(l.name)}</td>
       <td class="amt">${money(l.line_total)}</td>
-    </tr>
-    <tr><td class="mod" colspan="3">${escape(l.name)}</td></tr>`).join('')
+    </tr>`).join('')
   return `
-  ${logoImg(d, 'sm')}
-  <div class="c b lg">${escape(d.merchant)}</div>
-  ${addressBlock(d)}
-  ${d.rcNumber ? `<div class="c small">RC ${escape(d.rcNumber)}</div>` : ''}
+  ${logoImg(d)}
+  <table class="head">
+    <tr>
+      <td class="b lg">${escape(d.merchant)}</td>
+      <td class="amt small">${addressLines(d.address).map(escape).join('<br>')}</td>
+    </tr>
+  </table>
+  ${d.rcNumber ? `<div class="small">RC ${escape(d.rcNumber)}</div>` : ''}
   <div class="rule"></div>
   <table>
     <tr><td>Folio</td><td class="amt b">${escape(d.invoiceNumber)}</td></tr>
-    <tr><td>Date</td><td class="amt">${escape(d.date)}</td></tr>
+    <tr><td>Date</td><td class="amt">${escape(when(d))}</td></tr>
     ${d.customer ? `<tr><td>Guest</td><td class="amt">${escape(d.customer)}</td></tr>` : ''}
   </table>
   <div class="rule"></div>
   <table>
-    <tr class="hdr"><th>Date</th><th>Ref</th><th class="amt">Total</th></tr>
+    <tr class="hdr"><th>Date</th><th>Ref</th><th>Description</th><th class="amt">Charges</th></tr>
     ${rows}
   </table>
   <div class="rule"></div>
@@ -459,6 +637,8 @@ function tplStayFolio(d: ReceiptData): string {
   <div class="stars">*******************************</div>
   ${paymentsBlock(d)}
   ${firsBlock(d)}
+  <div class="small sig">GUEST SIGNATURE</div>
+  <div class="sigline"></div>
   ${signOff(d, 'Thank you for your stay')}`
 }
 
@@ -466,24 +646,24 @@ const BODIES: Record<ReceiptTemplate, (d: ReceiptData) => string> = {
   compact: tplCompact,
   detailed: tplDetailed,
   branded: tplBranded,
+  sales_receipt: tplSalesReceipt,
   classic_cash: tplClassicCash,
   shop_barcode: tplShopBarcode,
   stay_folio: tplStayFolio,
 }
 
-/** Build the 80mm receipt markup. Exported so it can be unit-tested. */
-export function buildReceiptHtml(d: ReceiptData): string {
-  const body = (BODIES[d.template as ReceiptTemplate] ?? tplCompact)(d)
-
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>${escape(d.invoiceNumber)}</title>
-<style>
-  /* 80mm roll. Margins are the printer's business, not ours. */
-  @page { size: 80mm auto; margin: 0; }
+/**
+ * The receipt's look, as ordinary CSS rules. They are NOT shipped as a <style>
+ * block: the desktop app's content-security policy blocks <style> elements, and
+ * a receipt printed from there came out in the browser's default serif font with
+ * an uncapped logo. Instead `inlineStyles` copies every rule onto the elements as
+ * style="" attributes, which that policy allows.
+ */
+const RECEIPT_CSS = `
   * { box-sizing: border-box; }
   body {
-    width: 80mm; margin: 0; padding: 4mm 3mm;
-    font-family: "Consolas", "Courier New", monospace;
+    box-sizing: border-box; width: 80mm; margin: 0; padding: 4mm 3mm;
+    font-family: "Roboto", Arial, Helvetica, sans-serif; /* receipts are laid out in a table with tabular-nums, so no monospace needed; Arial is the printer-safe fallback */
     font-size: 11px; line-height: 1.35; color: #000; background: #fff;
   }
   .c { text-align: center; }
@@ -496,32 +676,88 @@ export function buildReceiptHtml(d: ReceiptData): string {
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 0; vertical-align: top; text-align: left; font-weight: 400; }
   .amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .qty { color: #333; padding-left: 3mm; }
-  .mod { color: #333; font-size: 10px; padding-left: 3mm; font-style: italic; }
+  .qty { padding-left: 3mm; }
+  .mod { font-size: 10px; padding-left: 3mm; font-style: italic; }
   .nm { padding-top: 2px; }
   .nm4 { padding-top: 2px; width: 36%; word-break: break-word; }
+  .nm4s { padding-top: 2px; word-break: break-word; }
+  .nm4f { padding-top: 2px; width: 22%; }
+  .reff { width: 18%; }
+  .q { width: 9mm; white-space: nowrap; }
   .hdr th {
     font-size: 9px; font-weight: 700; letter-spacing: .06em;
     text-transform: uppercase; padding-bottom: 2px;
   }
   .hdr th.w4 { width: 36%; }
+  .dsc td { font-size: 8.5px; }
   .tot td { font-size: 13px; font-weight: 700; padding-top: 3px; }
+  .inc td { font-size: 9.5px; font-style: italic; }
+  .roomy td { padding: 1.5px 0; }
+  .roomy tr.b td { font-weight: 700; }
   .small { font-size: 9.5px; }
-  .ind { padding-left: 3mm; color: #333; }
+  .xl2 { font-size: 17px; letter-spacing: .04em; margin: 2px 0; }
+  .ind { padding-left: 3mm; }
   .note { margin-top: 4px; }
+  .saved { margin: 6px 0 2px; }
+  .feedback { margin-top: 6px; }
   .stars { font-size: 9px; overflow: hidden; white-space: nowrap; }
   .lead { display: flex; align-items: baseline; gap: 3px; }
   .lead .fill { flex: 1; border-bottom: 1px dotted #000; transform: translateY(-3px); }
   .lead.tl { font-size: 13px; }
   .sig { margin-top: 14px; }
   .sigline { border-top: 1px solid #000; margin-top: 16px; }
-  img.logo { display: block; margin: 0 auto 4px; max-width: 100%; }
-  img.logo.sm { width: 34px; }
-  img.logo.lg { width: 62px; }
+  .foot { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; }
+  /* The logo leads every layout. It is mono-converted before it gets here, and a
+     business with no logo has no <img> at all, so nothing is reserved for it. */
+  img.logo { display: block; margin: 0 auto 6px; width: auto; height: auto; max-width: 60%; max-height: 24mm; }
+  img.logo.lg { max-width: 72%; max-height: 30mm; }
+  img.logo.xl { max-width: 88%; max-height: 36mm; }
   img.qr { width: 26mm; height: 26mm; margin: 4px auto 0; display: block; }
   svg.bc { display: block; width: 78%; height: 34px; margin: 8px auto 2px; }
-</style></head>
-<body>${body}</body></html>`
+  svg.bc.full { width: 100%; height: 40px; }
+`
+
+type Decls = Map<string, string>
+
+/** Copy each rule in RECEIPT_CSS onto the elements it matches, as style attributes. */
+function inlineStyles(bodyHtml: string): { body: string; bodyStyle: string } {
+  const doc = new DOMParser().parseFromString('<!doctype html><body>' + bodyHtml + '</body>', 'text/html')
+  const rules = [...RECEIPT_CSS.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  const byEl = new Map<Element, Decls>()
+  const put = (el: Element, decl: string) => {
+    const m = byEl.get(el) ?? new Map<string, string>()
+    for (const part of decl.split(';')) {
+      const i = part.indexOf(':')
+      if (i < 0) continue
+      m.set(part.slice(0, i).trim(), part.slice(i + 1).trim())
+    }
+    byEl.set(el, m)
+  }
+  const bodyDecls: Decls = new Map()
+  for (const [, selText, decl] of rules) {
+    for (const sel of selText.split(',').map((x) => x.trim()).filter(Boolean)) {
+      if (sel === 'body') { put(doc.body, decl); continue }
+      doc.body.querySelectorAll(sel).forEach((el) => put(el, decl))
+    }
+  }
+  const out = (m: Decls) => [...m].map(([k, v]) => `${k}: ${v}`).join('; ')
+  const bodyStyle = out(byEl.get(doc.body) ?? bodyDecls)
+  byEl.delete(doc.body)
+  byEl.forEach((m, el) => el.setAttribute('style', out(m)))
+  return { body: doc.body.innerHTML, bodyStyle }
+}
+
+/** Build the 80mm receipt markup. Exported so it can be unit-tested. */
+export function buildReceiptHtml(d: ReceiptData): string {
+  const { body, bodyStyle } = inlineStyles((BODIES[d.template as ReceiptTemplate] ?? tplCompact)(d))
+
+  // Only the page size lives in a <style> block. Where a policy blocks it the
+  // receipt still lays out correctly: the body is 80mm wide on its own, and the
+  // printer driver then sets the paper.
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${escape(d.invoiceNumber)}</title>
+<style>@page { size: 80mm auto; margin: 0; }</style></head>
+<body style="${bodyStyle.replace(/"/g, '&quot;')}">${body}</body></html>`
 }
 
 /**
@@ -550,13 +786,18 @@ export async function printReceipt(d: ReceiptData): Promise<void> {
   const cleanup = () => { if (frame.parentNode) frame.parentNode.removeChild(frame) }
 
   frame.onload = () => {
+    let cleaned = false
+    const cleanupOnce = () => { if (!cleaned) { cleaned = true; cleanup() } }
     try {
+      // Tear the frame down only once printing has finished. On the desktop (WebView2) the
+      // print dialog stays open after print() returns, and removing the frame under it
+      // (the old fixed 1.5 s timer) can crash the renderer. A long timer is the fallback
+      // for shells that never raise `afterprint`.
+      frame.contentWindow?.addEventListener('afterprint', () => window.setTimeout(cleanupOnce, 500))
       frame.contentWindow?.focus()
       frame.contentWindow?.print()
     } finally {
-      // Give the print dialog time to take its snapshot before we tear the
-      // frame down — removing it immediately prints a blank page on WebKit.
-      window.setTimeout(cleanup, 1500)
+      window.setTimeout(cleanupOnce, 120_000)
     }
   }
 

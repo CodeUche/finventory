@@ -1,4 +1,6 @@
+import { isSupplierStatement } from '@/lib/statementShape'
 import { useEffect, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Truck, X, Pencil, Loader2, Trash2, FileText, Download, Scale } from 'lucide-react'
@@ -49,6 +51,7 @@ const BLANK = {
 const toPayload = (f: typeof BLANK) => ({ ...f, payable_account: f.payable_account || null })
 
 export default function SuppliersPage() {
+  const mounted = useIsMounted()
   const { organisation } = useAuthStore()
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,6 +75,7 @@ export default function SuppliersPage() {
   const [showStatement, setShowStatement] = useState(false)
   const [selected, setSelected] = useState<Supplier | null>(null)
   const [statementData, setStatementData] = useState<any>(null)
+  const [stmtError, setStmtError] = useState(false)
   const [loadingStmt, setLoadingStmt] = useState(false)
   const today = new Date().toISOString().split('T')[0]
   const [stmtFrom, setStmtFrom] = useState(`${today.slice(0, 8)}01`)
@@ -83,7 +87,7 @@ export default function SuppliersPage() {
       const { data } = await supplierApi.list({ search: search || undefined, page_size: 5000 })
       setSuppliers(data.results ?? data)
     } catch {
-      toast.error('Failed to load suppliers')
+      { if (mounted.current) toast.error('Failed to load suppliers') }
     } finally {
       setLoading(false)
     }
@@ -153,16 +157,19 @@ export default function SuppliersPage() {
   const openStatement = (s: Supplier) => {
     setSelected(s)
     setStatementData(null)
+    setStmtError(false)
     setShowStatement(true)
     loadStatement(s.id)
   }
 
   const loadStatement = async (id: string, from = stmtFrom, to = stmtTo) => {
     setLoadingStmt(true)
+    setStmtError(false)
     try {
       const { data } = await supplierApi.statement(id, { date_from: from, date_to: to })
+      if (!isSupplierStatement(data)) { setStatementData(null); setStmtError(true); return }
       setStatementData(data)
-    } catch { toast.error('Failed to load statement') }
+    } catch { setStatementData(null); setStmtError(true) }
     finally { setLoadingStmt(false) }
   }
 
@@ -324,16 +331,16 @@ export default function SuppliersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Suppliers</h1>
-          <p className="text-slate-400 text-sm">{total} supplier{total !== 1 ? 's' : ''}</p>
+          <p className="text-slate-400 text-sm">({total}) supplier{total !== 1 ? 's' : ''}</p>
         </div>
         <button className="btn-primary sm:ml-auto" onClick={openCreate}>
-          <Plus size={16} /> Add Supplier
+          <Plus size={16} /> Add New Supplier
         </button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-        <input className="input pl-9" placeholder="Search by name or code…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="ds-proc-search relative max-w-sm">
+        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+        <input className="input pl-9" aria-label="Search suppliers" placeholder="Search by name or code…" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
       <div className="card p-0 overflow-hidden">
@@ -341,7 +348,7 @@ export default function SuppliersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Code', 'Name', 'Contact', 'Phone', 'Email', 'Payment Terms', ''].map((h) => (
+                {['Code', 'Name', 'Contact Person', 'Phone', 'Email', 'Payment Terms', ''].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -356,9 +363,11 @@ export default function SuppliersPage() {
                   </tr>
                 ))
               ) : total === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-12 text-center">
-                  <Truck size={32} className="mx-auto mb-2 text-slate-600" />
-                  <p className="text-slate-500">No suppliers yet</p>
+                <tr><td colSpan={7} className="p-4">
+                  <div className="ds-empty">
+                    <Truck size={32} aria-hidden="true" />
+                    <p>{search ? 'No suppliers match your search' : 'No Supplier Yet'}</p>
+                  </div>
                 </td></tr>
               ) : (
                 paged.map((s) => (
@@ -369,17 +378,17 @@ export default function SuppliersPage() {
                     <td className="px-5 py-3.5 text-slate-400">{s.phone || '—'}</td>
                     <td className="px-5 py-3.5 text-slate-400">{s.email || '—'}</td>
                     <td className="px-5 py-3.5 text-slate-400">
-                      {s.payment_terms_days === 0 ? 'COD' : `Net ${s.payment_terms_days}d`}
+                      {s.payment_terms_days === 0 ? 'COD' : `Net ${s.payment_terms_days} days`}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => openStatement(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="View statement">
+                        <button onClick={() => openStatement(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="View statement" aria-label={`Statement for ${s.name}`}>
                           <FileText size={14} />
                         </button>
-                        <button onClick={() => setBalanceParty(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="Adjust opening balance">
+                        <button onClick={() => setBalanceParty(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="Adjust opening balance" aria-label={`Adjust opening balance for ${s.name}`}>
                           <Scale size={14} />
                         </button>
-                        <button onClick={() => openEdit(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white">
+                        <button onClick={() => openEdit(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="Edit supplier" aria-label={`Edit ${s.name}`}>
                           <Pencil size={14} />
                         </button>
                         <button
@@ -388,7 +397,9 @@ export default function SuppliersPage() {
                             try { await supplierApi.delete(s.id); toast.success('Supplier deleted'); load() }
                             catch { toast.error('Cannot delete supplier — may have linked purchase orders') }
                           }}
-                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                          className="btn-ghost p-1.5 text-red-400"
+                          title="Delete supplier"
+                          aria-label={`Delete ${s.name}`}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -514,11 +525,11 @@ export default function SuppliersPage() {
               <div className="flex flex-wrap items-end gap-3">
                 <div>
                   <label className="label">From</label>
-                  <input type="date" className="input" value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
+                  <DateInput className="w-full" value={stmtFrom} onChange={setStmtFrom} />
                 </div>
                 <div>
                   <label className="label">To</label>
-                  <input type="date" className="input" value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
+                  <DateInput className="w-full" value={stmtTo} onChange={setStmtTo} />
                 </div>
                 <button onClick={() => loadStatement(selected.id)} className="btn-primary" disabled={loadingStmt}>
                   {loadingStmt ? <Loader2 size={16} className="animate-spin" /> : 'Apply'}
@@ -527,6 +538,11 @@ export default function SuppliersPage() {
 
               {loadingStmt ? (
                 <div className="py-12 text-center"><Loader2 size={24} className="animate-spin mx-auto text-slate-500" /></div>
+              ) : stmtError ? (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-center space-y-3">
+                  <p className="text-sm text-red-400">We could not load this statement. Check your connection and try again.</p>
+                  <div className="flex justify-center"><button type="button" onClick={() => loadStatement(selected.id)} className="btn-secondary text-xs">Retry</button></div>
+                </div>
               ) : !statementData ? null : (
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -535,7 +551,7 @@ export default function SuppliersPage() {
                       { label: 'Total Billed', value: formatCurrency(statementData.summary.total_billed), color: 'text-red-400', sub: `${statementData.bills.length} bill${statementData.bills.length !== 1 ? 's' : ''}` },
                       { label: 'VAT', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Input VAT on bills' },
                       { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400', sub: `${statementData.payments.length} payment${statementData.payments.length !== 1 ? 's' : ''}` },
-                      { label: 'Outstanding', value: formatCurrency(statementData.summary.outstanding_balance), color: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'text-amber-400' : 'text-green-400', sub: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'Owed to supplier' : 'Settled' },
+                      { label: 'Outstanding', value: formatCurrency(statementData.summary.outstanding_balance), color: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'text-brand-400' : 'text-green-400', sub: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'Owed to supplier' : 'Settled' },
                     ].map((k) => (
                       <div key={k.label} className="rounded-xl border border-surface-700 bg-surface-900/40 p-3">
                         <p className="text-[11px] uppercase tracking-wide text-slate-500">{k.label}</p>

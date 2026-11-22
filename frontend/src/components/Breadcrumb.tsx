@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import { ChevronRight, Home } from 'lucide-react'
+import { hubBySlug } from '@/pages/hubs/hubConfig'
 
 // Maps every known path segment or full path to a readable label.
 // Checked longest-match first so "/accounting/coa" beats "/accounting".
@@ -8,27 +9,38 @@ const ROUTE_LABELS: Record<string, string> = {
   '/dashboard':                   'Dashboard',
   '/inventory/products':          'Products',
   '/inventory/stock':             'Stock Levels',
-  '/inventory/warehouses':        'Locations',
+  '/inventory/warehouses':        'Warehouses',
   '/inventory/batches':           'Batches & Lots',
   '/sales':                       'Invoices',
-  '/sales/new':                   'New Sale',
+  '/sales/new':                   'New sale & invoice',
+  '/pos/till':                    'Till',
   '/quotes':                      'Quotes',
   '/recurring':                   'Recurring Invoices',
   '/purchases':                   'Purchase Orders',
-  '/bills':                       'Bills (AP)',
+  '/bills':                       'Bills',
   '/bills/folders':               'Bill Folders',
   '/suppliers':                   'Suppliers',
-  '/customers':                   'Customers',
+  '/customers':                   'Customers & Receipts',
   '/credits':                     'Credits',
   '/accounting/coa':              'Chart of Accounts',
   '/accounting/journal':          'Journal Entries',
   '/accounting/general-ledger':   'General Ledger',
   '/accounting/assets':           'Fixed Assets',
   '/accounting/reconciliation':   'Bank Reconciliation',
+  '/hr/employees':                'Employees',
+  '/hr/org-chart':                'Org. Chart',
+  '/hr/leave':                    'Leave',
+  '/hr/runs':                     'Payroll Run',
+  '/hr/compliance':               'Compliance & Remittance',
+  '/hr/analytics':                'HR Analytics',
   '/payroll/employees':           'Employees',
   '/payroll/runs':                'Payroll Runs',
   '/expenses':                    'Income & Expenses',
   '/budgets':                     'Budgets',
+  '/budgets/monitoring':          'Budget Monitoring',
+  '/budgets/periods':             'Budget Periods',
+  '/budgets/allocations':         'Budget Allocations',
+  '/purchases/returns':           'Purchase Returns',
   '/reports':                     'Reports',
   '/reports/balance-sheet':       'Balance Sheet',
   '/owner-analytics':             'Owner Analytics',
@@ -40,7 +52,7 @@ const ROUTE_LABELS: Record<string, string> = {
 
   // ── Parent segment labels (used to build crumb trail) ────────────────────
   'inventory':   'Inventory',
-  'sales':       'Sales',
+  'sales':       'Sales & Invoices',
   'accounting':  'Accounting',
   'payroll':     'Payroll',
   'reports':     'Reports',
@@ -55,12 +67,36 @@ const SECTION_MAP: Record<string, string> = {
   sales:      'Sales',
   accounting: 'Accounting',
   payroll:    'Payroll',
+  hr:         'HR',
   reports:    'Reports',
   bills:      'Procurement',
   purchases:  'Procurement',
   suppliers:  'Procurement',
-  budgets:    'Cash Flow',
   expenses:   'Cash Flow',
+}
+
+// Pages that sit under a sidebar group whose name is not their first path segment:
+// the budget pages are listed under Accounting & Finance in the sidebar.
+const PAGE_PARENTS: Record<string, Crumb[]> = {
+  budgets: [{ label: 'Accounting', href: '/hub/accounting' }],
+}
+
+// Where each section crumb leads: the hub page of that sidebar group.
+const SECTION_HUB: Record<string, string> = {
+  inventory:  '/hub/inventory',
+  accounting: '/hub/accounting',
+  sales:      '/hub/sales-pos',
+  bills:      '/hub/procurement',
+  purchases:  '/hub/procurement',
+  suppliers:  '/hub/procurement',
+  payroll:    '/hub/hr',
+  hr:         '/hub/hr',
+}
+
+// Per-route middle crumbs where the designer's trail differs from the section name:
+// "Home > Sales & Invoices > New sale & invoice" (the section crumb would otherwise say just "Sales").
+const PATH_PARENTS: Record<string, Crumb[]> = {
+  '/sales/new': [{ label: 'Sales & Invoices', href: '/sales' }],
 }
 
 interface Crumb {
@@ -75,6 +111,21 @@ function buildCrumbs(pathname: string): Crumb[] {
   // Dashboard itself needs no further crumbs
   if (pathname === '/dashboard' || pathname === '/') return crumbs
 
+  // Hub landing pages: Home > <hub name> (the designer's "Home > Sales & POS")
+  const hubMatch = pathname.match(/^\/hub\/([^/]+)$/)
+  if (hubMatch) {
+    const hub = hubBySlug(hubMatch[1])
+    if (hub) crumbs.push({ label: hub.title, href: pathname })
+    return crumbs
+  }
+
+  // A route with its own designer-drawn middle crumb
+  const pathParents = PATH_PARENTS[pathname]
+  if (pathParents && ROUTE_LABELS[pathname]) {
+    crumbs.push(...pathParents, { label: ROUTE_LABELS[pathname], href: pathname })
+    return crumbs
+  }
+
   // Try full-path label first
   const pageLabel = ROUTE_LABELS[pathname]
 
@@ -83,10 +134,19 @@ function buildCrumbs(pathname: string): Crumb[] {
   const firstSeg = segments[0]
   const section = SECTION_MAP[firstSeg]
 
+  const parents = PAGE_PARENTS[firstSeg]
+  if (parents) {
+    crumbs.push(...parents)
+    if (segments.length > 1) crumbs.push({ label: ROUTE_LABELS['/' + firstSeg] ?? firstSeg, href: '/' + firstSeg })
+    crumbs.push({ label: pageLabel ?? ROUTE_LABELS['/' + firstSeg] ?? firstSeg, href: pathname })
+    return crumbs
+  }
+
   if (section) {
     // Add section crumb only when there's a sub-page (e.g. /inventory/stock)
     // and the section is different from the page itself
-    const sectionHref = `/${firstSeg}`
+    // The middle crumb opens the group's hub page (the designer's "Home > Inventory > Products").
+    const sectionHref = SECTION_HUB[firstSeg] ?? `/${firstSeg}`
     if (segments.length > 1) {
       crumbs.push({ label: section, href: sectionHref })
     } else {

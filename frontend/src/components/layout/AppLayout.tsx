@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import RouteErrorBoundary from '@/components/RouteErrorBoundary'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
@@ -80,6 +81,7 @@ export default function AppLayout() {
   // "back online — sign in to sync" banner during an offline grace session.
   const [queuedCount, setQueuedCount] = useState(0)
   const { pathname } = useLocation()
+  const isRegister = pathname === '/pos/register'
 
   // Phone drawer: close it once a link has been followed, so the new page is visible.
   useEffect(() => { setSidebarOpen(false) }, [pathname])
@@ -354,11 +356,10 @@ export default function AppLayout() {
             <span>
               You&apos;re offline.{' '}
               {cacheAge
-                ? <>Showing cached data from <strong>{cacheAge}</strong>. </>
-                : 'Cached data will appear as you navigate. '}
-              New entries are queued and sync automatically when reconnected —
-              but accountant access, billing and organisation settings need a
-              live connection and will not go through yet.
+                ? <>Showing the last saved copy from <strong>{cacheAge}</strong>, so figures may be out of date. </>
+                : 'Showing the last saved copy, so figures may be out of date. '}
+              Your changes are kept and sent automatically when you are back online; accountant access,
+              billing and organisation settings need a live connection.
             </span>
           </div>
         )}
@@ -424,10 +425,13 @@ export default function AppLayout() {
           </div>
         )}
         {/* Breadcrumb trail */}
-        <div className="px-4 lg:px-6 pt-3 pb-0">
-          <Breadcrumb />
-        </div>
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 animate-fade-in">
+        {!isRegister && (
+          <div className="px-4 lg:px-6 pt-3 pb-0">
+            <Breadcrumb />
+          </div>
+        )}
+        {/* The till fills the whole content area and scrolls inside itself. */}
+        <main className={isRegister ? 'flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in' : 'flex-1 overflow-y-auto p-4 lg:p-6 pb-24 lg:pb-24 animate-fade-in'}>
           {/* Gate: hold child pages until org context is resolved so their
               initial fetches never fire with a null X-Organisation-ID header.
               This prevents the "Failed to load xyz" flash for superusers who
@@ -449,7 +453,7 @@ export default function AppLayout() {
               </button>
             </div>
           ) : (orgListLoaded || organisation?.id) ? (
-            <Outlet />
+            <RouteErrorBoundary><Outlet /></RouteErrorBoundary>
           ) : (
             <div className="flex-1 flex items-center justify-center py-32">
               <div className="w-7 h-7 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />

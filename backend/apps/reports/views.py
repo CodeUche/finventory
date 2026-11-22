@@ -10,6 +10,7 @@ All report endpoints are GET-only and accept:
 The ?format param is handled by each view via _export_or_json().
 """
 
+from django.utils import timezone
 import io
 
 from django.http import HttpResponse
@@ -17,7 +18,12 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module, user_can_run_report
+from apps.core.permissions import (
+    IsManagerOrSuperuser,
+    IsStaff,
+    requires_module,
+    user_can_run_report,
+)
 
 # The owner's per-person "Reports" tick. Without it these views checked only
 # role, so a team member refused /customers/ and /sales/invoices/ could read
@@ -59,7 +65,12 @@ class BaseDateRangeView(APIView):
     marks content that is intentionally Reports-tick-only; a test pins the list.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_reports, _ReportRouteAccess]
+    permission_classes = [
+        IsAuthenticated,
+        IsStaff,
+        _ModAccess_reports,
+        _ReportRouteAccess,
+    ]
     module = None
     also_modules = ()
     owner_admin_only = False
@@ -357,9 +368,9 @@ class ARAgingView(BaseDateRangeView):
 
         as_of_str = request.query_params.get("as_of")
         try:
-            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else date.today()
+            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else timezone.localdate()
         except ValueError:
-            as_of = date.today()
+            as_of = timezone.localdate()
 
         data = ReportService.ar_aging(self.get_organisation(), as_of)
 
@@ -393,9 +404,9 @@ class APAgingView(BaseDateRangeView):
 
         as_of_str = request.query_params.get("as_of")
         try:
-            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else date.today()
+            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else timezone.localdate()
         except ValueError:
-            as_of = date.today()
+            as_of = timezone.localdate()
 
         data = ReportService.ap_aging(self.get_organisation(), as_of)
 

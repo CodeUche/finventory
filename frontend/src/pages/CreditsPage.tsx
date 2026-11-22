@@ -1,10 +1,13 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle, ChevronDown, ChevronRight, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { creditApi, accountingApi, inventoryApi } from '@/services/api'
+import { creditApi, accountingApi, inventoryApi, bypassNextGets } from '@/services/api'
+import { offlineCache } from '@/lib/offlineCache'
 import { orgApi } from '@/services/api'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import { sumUnits, fromUnits } from '@/lib/money'
 import AmountInput from '@/components/AmountInput'
 import type { Account, CreditPaymentMode, CreditTransaction, Customer, Invoice, Warehouse } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -49,6 +52,7 @@ const EMPTY_PAY_FORM = {
 }
 
 export default function CreditsPage() {
+  const mounted = useIsMounted()
   const [transactions, setTransactions] = useState<CreditTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -89,10 +93,20 @@ export default function CreditsPage() {
       const params: Record<string, unknown> = {}
       if (search) params.search = search
       if (typeFilter) params.transaction_type = typeFilter
-      const { data } = await creditApi.list(params)
-      setTransactions(data.results ?? data)
+      // The header totals add up every row, so fetch every page (25 per page by default,
+      // so ask for the largest page and follow `next` for anything beyond it).
+      const rows: CreditTransaction[] = []
+      let page = 1
+      for (;;) {
+        const { data } = await creditApi.list({ ...params, page_size: 5000, ...(page > 1 ? { page } : {}) })
+        if (Array.isArray(data)) { rows.push(...data); break }
+        rows.push(...(data.results ?? []))
+        if (!data.next || page >= 50) break
+        page += 1
+      }
+      setTransactions(rows)
     } catch {
-      toast.error('Failed to load credit transactions')
+      { if (mounted.current) toast.error('Failed to load credit transactions') }
     } finally {
       setLoading(false)
     }
@@ -187,6 +201,10 @@ export default function CreditsPage() {
       toast.success('Payment recorded')
       setShowPayModal(false)
       resetPayForm()
+      // record_payment is an action endpoint, so the request layer does not clear the saved
+      // credits list; clear it here or the counters keep showing the pre-payment list.
+      bypassNextGets(8000)
+      await offlineCache.invalidatePrefix('/credits/')
       load()
     } catch (err: any) {
       const apiErr = err?.response?.data?.error
@@ -221,70 +239,70 @@ export default function CreditsPage() {
         if (!byInvoice.has(k)) byInvoice.set(k, [])
         byInvoice.get(k)!.push(t)
       }
-      const owed = txns.filter((t) => t.transaction_type === 'debit').reduce((a, t) => a + parseFloat(t.amount), 0)
-      const paid = txns.filter((t) => t.transaction_type === 'credit').reduce((a, t) => a + parseFloat(t.amount), 0)
+      const owed = sumUnits(txns.filter((t) => t.transaction_type === 'debit').map((t) => t.amount))
+      const paid = sumUnits(txns.filter((t) => t.transaction_type === 'credit').map((t) => t.amount))
       return { customer, txns, owed, paid, invoices: Array.from(byInvoice.entries()) }
     })
   })()
 
-  const totalOutstanding = transactions
-    .filter((t) => t.transaction_type === 'debit')
-    .reduce((s, t) => s + parseFloat(t.amount), 0)
-
-  const totalPaid = transactions
-    .filter((t) => t.transaction_type === 'credit')
-    .reduce((s, t) => s + parseFloat(t.amount), 0)
+  // Exact sums on the decimal strings (no floating point).
+  const totalOutstanding = sumUnits(transactions.filter((t) => t.transaction_type === 'debit').map((t) => t.amount))
+  const totalPaid = sumUnits(transactions.filter((t) => t.transaction_type === 'credit').map((t) => t.amount))
+  const netUnits = totalOutstanding - totalPaid
+  const abs = (n: bigint) => (n < BigInt(0) ? -n : n)
+  // Until the first load finishes, show a dash rather than zeros that look like real figures.
+  const firstLoad = loading && transactions.length === 0
+  const money = (n: bigint) => (firstLoad ? '—' : formatCurrency(fromUnits(n)))
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Payment Information</h1>
-          <p className="text-slate-400 text-sm">{transactions.length} transactions</p>
+          <p className="text-slate-400 text-sm">{firstLoad ? 'Loading…' : `${transactions.length} ${transactions.length === 1 ? 'transaction' : 'transactions'}`}</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={openPayModal}>
+        <button className="btn-primary" onClick={openPayModal}>
           <Plus size={16} /> Record Payment
         </button>
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-red-500/15 flex items-center justify-center">
-            <TrendingDown size={22} className="text-red-400" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400">Total Outstanding</p>
-            <p className="text-xl font-bold text-red-400">{formatCurrency(totalOutstanding)}</p>
+      <div className="ds-stats !mb-0">
+        <div className="ds-stat has-icon">
+          <span className="ds-stat-ico" data-tone="bad"><TrendingDown size={22} /></span>
+          <div className="ds-stat-body" data-tone="bad">
+            <span className="ds-stat-value">{money(totalOutstanding)}</span>
+            <span className="ds-stat-label">Total Outstanding</span>
           </div>
         </div>
-        <div className="card p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-emerald-500/15 flex items-center justify-center">
-            <TrendingUp size={22} className="text-emerald-400" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400">Total Payments</p>
-            <p className="text-xl font-bold text-emerald-400">{formatCurrency(totalPaid)}</p>
+        <div className="ds-stat has-icon">
+          <span className="ds-stat-ico" data-tone="good"><TrendingUp size={22} /></span>
+          <div className="ds-stat-body" data-tone="good">
+            <span className="ds-stat-value">{money(totalPaid)}</span>
+            <span className="ds-stat-label">Total Payments</span>
           </div>
         </div>
-        <div className="card p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-brand-500/15 flex items-center justify-center">
-            <CreditCard size={22} className="text-brand-400" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400">Net Balance</p>
-            <p className={`text-xl font-bold ${totalOutstanding - totalPaid > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-              {formatCurrency(Math.abs(totalOutstanding - totalPaid))}
-            </p>
+        <div className="ds-stat has-icon">
+          <span className="ds-stat-ico"><CreditCard size={22} /></span>
+          <div className="ds-stat-body" data-tone={netUnits > BigInt(0) ? 'bad' : 'good'}>
+            <span className="ds-stat-value">{money(abs(netUnits))}</span>
+            <span className="ds-stat-label">Net Balance</span>
           </div>
         </div>
       </div>
 
       {/* Aging report */}
-      {aging && aging.length > 0 && (
+      {aging && aging.length > 0 && aging.every((b) => !b.count && !parseFloat(String(b.total) || '0')) && (
+        <div className="card px-5 py-3 flex items-center gap-2">
+          <AlertCircle size={16} className="text-brand-400" />
+          <h3 className="text-sm font-semibold text-white">Aging Report</h3>
+          <span className="text-sm text-slate-400">Nothing outstanding to age right now.</span>
+        </div>
+      )}
+      {aging && aging.length > 0 && !aging.every((b) => !b.count && !parseFloat(String(b.total) || '0')) && (
         <div className="card p-5">
           <div className="flex items-center gap-2 mb-4">
-            <AlertCircle size={16} className="text-amber-400" />
+            <AlertCircle size={16} className="text-brand-400" />
             <h3 className="text-sm font-semibold text-white">Aging Report</h3>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -300,8 +318,8 @@ export default function CreditsPage() {
       )}
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="ds-filters !mb-0">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input className="input pl-9" placeholder="Search customer…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -314,12 +332,12 @@ export default function CreditsPage() {
       </div>
 
       {/* Table */}
-      <div className="card p-0 overflow-hidden">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Date', 'Payment #', 'Mode', 'Customer', 'Type', 'Amount', 'Balance After', 'Due Date', 'Description'].map((h) => (
+                {['Date', 'Payment', 'Mode', 'Customer', 'Type', 'Amount', 'Balance After', 'Due Date', 'Description'].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -334,10 +352,7 @@ export default function CreditsPage() {
                   </tr>
                 ))
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={9} className="px-5 py-12 text-center">
-                  <CreditCard size={32} className="mx-auto mb-2 text-slate-600" />
-                  <p className="text-slate-500">No credit transactions</p>
-                </td></tr>
+                <tr><td colSpan={9} className="ds-empty-cell">No Credit Transactions</td></tr>
               ) : (
                 customerGroups.map((g) => {
                   const custOpen = expandedCustomers[g.customer] ?? false
@@ -358,13 +373,13 @@ export default function CreditsPage() {
                         </td>
                         <td className="px-5 py-3.5" colSpan={2}>
                           <span className="text-xs text-slate-500">Owed </span>
-                          <span className="font-semibold text-red-400">{formatCurrency(g.owed)}</span>
+                          <span className="font-semibold text-red-400">{formatCurrency(fromUnits(g.owed))}</span>
                           <span className="text-xs text-slate-500 ml-3">Paid </span>
-                          <span className="font-semibold text-emerald-400">{formatCurrency(g.paid)}</span>
+                          <span className="font-semibold text-emerald-400">{formatCurrency(fromUnits(g.paid))}</span>
                         </td>
                         <td className="px-5 py-3.5" colSpan={3}>
                           <span className="text-xs text-slate-500">Net </span>
-                          <span className={`font-semibold ${g.owed - g.paid > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(Math.abs(g.owed - g.paid))}</span>
+                          <span className={`font-semibold ${g.owed - g.paid > BigInt(0) ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(fromUnits(abs(g.owed - g.paid)))}</span>
                         </td>
                       </tr>
                       {custOpen && g.invoices.map(([invKey, txns]) => {
@@ -402,7 +417,7 @@ export default function CreditsPage() {
                                 </td>
                                 <td className="px-5 py-3.5 text-slate-300">{formatCurrency(t.balance_after)}</td>
                                 <td className="px-5 py-3.5 text-slate-400">{t.due_date ? formatDate(t.due_date) : '—'}</td>
-                                <td className="px-5 py-3.5 text-slate-400 max-w-xs truncate">{t.description || '—'}</td>
+                                <td className="px-5 py-3.5 text-slate-400 min-w-[14rem] max-w-sm" title={t.description || undefined}>{t.description || '—'}</td>
                               </tr>
                             ))}
                           </Fragment>
@@ -421,7 +436,7 @@ export default function CreditsPage() {
       {showPayModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowPayModal(false)} />
-          <div className="relative card w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+          <div className="relative card ds-modal w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div><h2 className="text-lg font-bold text-white">Record Payment</h2><p className="text-xs text-slate-500 mt-0.5">Fields marked <span className="text-brand-400">*</span> are required — everything else is optional.</p></div>
               <button onClick={() => setShowPayModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>

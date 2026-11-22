@@ -62,12 +62,12 @@ function formatMessageTime(iso: string): string {
  *  distinct from the brand teal used for "my" bubbles. */
 const TEAMMATE_PALETTE = [
   { text: 'text-rose-400', bg: 'bg-rose-500/20' },
-  { text: 'text-amber-400', bg: 'bg-amber-500/20' },
+  { text: 'text-sky-400', bg: 'bg-sky-500/20' },
   { text: 'text-violet-400', bg: 'bg-violet-500/20' },
   { text: 'text-cyan-400', bg: 'bg-cyan-500/20' },
   { text: 'text-lime-400', bg: 'bg-lime-500/20' },
   { text: 'text-fuchsia-400', bg: 'bg-fuchsia-500/20' },
-  { text: 'text-orange-400', bg: 'bg-orange-500/20' },
+  { text: 'text-teal-400', bg: 'bg-teal-500/20' },
   { text: 'text-indigo-400', bg: 'bg-indigo-500/20' },
 ]
 
@@ -307,7 +307,7 @@ export default function MessagesPage() {
                 onClick={() => setFilter('accountant')}
                 className={cn(
                   'flex-1 text-xs font-semibold py-1.5 rounded-md transition-colors',
-                  filter === 'accountant' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-white'
+                  filter === 'accountant' ? 'bg-[#1558EA] text-always-white' : 'text-slate-400 hover:text-white'
                 )}
               >
                 {isPartner ? 'Clients' : 'Accountant'}
@@ -360,7 +360,7 @@ export default function MessagesPage() {
                           {displayName(other)}
                         </p>
                         {crossOrg && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 shrink-0 uppercase tracking-wide">
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 shrink-0 uppercase tracking-wide">
                             CLIENT
                           </span>
                         )}
@@ -410,7 +410,7 @@ export default function MessagesPage() {
                     {displayName(otherParticipant(selectedConv, user?.id))}
                   </p>
                   {isCrossOrgThread(selectedConv) && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wide">
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 uppercase tracking-wide">
                       CLIENT
                     </span>
                   )}

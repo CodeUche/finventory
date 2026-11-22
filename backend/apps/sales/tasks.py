@@ -30,7 +30,7 @@ def mark_overdue_invoices(self):
     """
     from .models import Invoice
 
-    today = timezone.now().date()
+    today = timezone.localdate()
 
     def _mark(org):
         return Invoice.objects.filter(
@@ -57,7 +57,7 @@ def generate_recurring_invoices(self):
     from .models import RecurringInvoice, RecurringInvoiceLog
     from .services import SaleService
 
-    today = timezone.now().date()
+    today = timezone.localdate()
 
     # Counts individual invoice failures, which is what this task has always
     # reported — distinct from the helper's `failed`, which counts whole

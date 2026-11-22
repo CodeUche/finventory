@@ -9,11 +9,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  AlertTriangle, Check, CreditCard, GitBranch, Loader2, RefreshCw, Upload, X,
+  AlertTriangle, Check, GitBranch, Loader2, RefreshCw, Upload, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { settlementApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
@@ -51,6 +52,7 @@ const BADGE: Record<Line['status'], string> = {
 }
 
 export default function SettlementPage() {
+  const mounted = useIsMounted()
   const [lines, setLines] = useState<Line[]>([])
   const [summary, setSummary] = useState<{ needs_review: number; needs_review_total: string; matched: number } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -70,7 +72,7 @@ export default function SettlementPage() {
       ])
       setLines(l.data.results ?? l.data)
       setSummary(s.data)
-    } catch { toast.error('Could not load settlements') }
+    } catch { { if (mounted.current) toast.error('Could not load settlements') } }
     finally { setLoading(false) }
   }
 
@@ -101,7 +103,7 @@ export default function SettlementPage() {
     try {
       const { data } = await settlementApi.candidates()
       setCandidates(data.results)
-    } catch { toast.error('Could not load card sales') }
+    } catch { { if (mounted.current) toast.error('Could not load card sales') } }
   }
 
   const assign = async (paymentId: string) => {
@@ -150,7 +152,7 @@ export default function SettlementPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Card settlement</h1>
           <p className="text-sm text-slate-400">
@@ -159,7 +161,7 @@ export default function SettlementPage() {
               : 'Every payout is accounted for'}
           </p>
         </div>
-        <div className="flex gap-2 sm:ml-auto">
+        <div className="flex flex-wrap gap-2">
           <input
             ref={fileRef} type="file" accept=".csv,.txt,text/csv" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f) }}
@@ -173,7 +175,7 @@ export default function SettlementPage() {
           </button>
           <button
             onClick={() => setFilter(filter === 'unmatched' ? 'all' : 'unmatched')}
-            className="btn-ghost text-sm"
+            className="btn-secondary text-sm"
           >
             {filter === 'unmatched' ? 'Show all' : 'Only unmatched'}
           </button>
@@ -186,13 +188,13 @@ export default function SettlementPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-surface-600 bg-surface-800/50 p-4 text-sm text-slate-300">
+      <div className="ds-info !mb-0">
         Export the day&rsquo;s transactions from your Moniepoint or OPay dashboard and drop the
         file here. Each payout is matched to the sale it settles, by exact amount and time.
         Anything we can&rsquo;t be sure about is listed below rather than guessed.
       </div>
 
-      <div className="card overflow-hidden p-0">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -217,11 +219,8 @@ export default function SettlementPage() {
                 ))
               ) : shown.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center">
-                    <CreditCard size={28} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">
-                      {filter === 'unmatched' ? 'Nothing needs review' : 'No payouts imported yet'}
-                    </p>
+                  <td colSpan={7} className="ds-empty-cell">
+                    {filter === 'unmatched' ? 'Nothing needs review' : 'No payouts imported yet'}
                   </td>
                 </tr>
               ) : shown.map((l) => (

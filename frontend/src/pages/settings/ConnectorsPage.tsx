@@ -26,7 +26,7 @@ const ICONS: Record<ConnectorKey, React.ElementType> = {
   gmail: Mail,
 }
 const ICON_STYLES: Record<ConnectorKey, string> = {
-  slack: 'bg-gold-500/10 text-gold-400',
+  slack: 'bg-brand-500/10 text-brand-400',
   google_sheets: 'bg-green-500/10 text-green-400',
   google_drive: 'bg-blue-500/10 text-blue-400',
   google_calendar: 'bg-purple-500/10 text-purple-400',
@@ -350,7 +350,7 @@ export default function ConnectorsPage() {
   if (loading || !data) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 size={24} className="animate-spin text-gold-400" />
+        <Loader2 size={24} className="animate-spin text-brand-400" />
       </div>
     )
   }
@@ -378,12 +378,12 @@ export default function ConnectorsPage() {
           </p>
         </div>
         <div className="flex items-center gap-3 bg-surface-800 border border-surface-700 rounded-xl px-4 py-2.5">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-gold-400">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-brand-400">
             {quota.plan_name ?? 'Free'} plan
           </span>
           <div className="w-20 h-1.5 rounded-full bg-surface-700 overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-gold-600 to-gold-400 transition-all"
+              className="h-full rounded-full bg-gradient-to-r from-brand-600 to-brand-400 transition-all"
               style={{ width: `${quotaPct}%` }}
             />
           </div>
@@ -458,13 +458,13 @@ export default function ConnectorsPage() {
                     <div className="hidden md:flex items-center gap-1 text-[11px] shrink-0">
                       <button
                         onClick={() => setAddonInterval((prev) => ({ ...prev, [entry.connector_key]: 'monthly' }))}
-                        className={`px-2 py-0.5 rounded-full border transition-colors ${interval === 'monthly' ? 'border-gold-500 text-gold-400 bg-gold-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
+                        className={`px-2 py-0.5 rounded-full border transition-colors ${interval === 'monthly' ? 'border-brand-500 text-brand-400 bg-brand-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
                       >
                         Monthly
                       </button>
                       <button
                         onClick={() => setAddonInterval((prev) => ({ ...prev, [entry.connector_key]: 'annual' }))}
-                        className={`px-2 py-0.5 rounded-full border transition-colors ${interval === 'annual' ? 'border-gold-500 text-gold-400 bg-gold-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
+                        className={`px-2 py-0.5 rounded-full border transition-colors ${interval === 'annual' ? 'border-brand-500 text-brand-400 bg-brand-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
                       >
                         Annual
                       </button>
@@ -516,7 +516,7 @@ export default function ConnectorsPage() {
                       <button
                         onClick={() => handleConnect(entry.connector_key)}
                         disabled={connectingKey === entry.connector_key}
-                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gold-500 hover:bg-gold-400 text-surface-950 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-brand-500 hover:bg-gold-400 text-surface-950 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
                       >
                         {connectingKey === entry.connector_key && <Loader2 size={12} className="animate-spin" />}
                         Connect
@@ -527,7 +527,7 @@ export default function ConnectorsPage() {
                       <button
                         onClick={() => handleAddonPurchase(entry.connector_key)}
                         disabled={addonPurchasingKey === entry.connector_key}
-                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold border border-gold-600/40 text-gold-400 hover:bg-gold-500/10 transition-colors disabled:opacity-60 flex items-center gap-1.5 whitespace-nowrap"
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold border border-gold-600/40 text-brand-400 hover:bg-brand-500/10 transition-colors disabled:opacity-60 flex items-center gap-1.5 whitespace-nowrap"
                       >
                         {addonPurchasingKey === entry.connector_key && <Loader2 size={12} className="animate-spin" />}
                         {fmtNaira(price)}/{interval === 'annual' ? 'yr' : 'mo'}
@@ -625,7 +625,7 @@ export default function ConnectorsPage() {
                       <button
                         onClick={() => saveConfig(entry.connector_key)}
                         disabled={savingConfig}
-                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gold-500 hover:bg-gold-400 text-surface-950 transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-brand-500 hover:bg-gold-400 text-surface-950 transition-colors disabled:opacity-60 flex items-center gap-1.5"
                       >
                         {savingConfig && <Loader2 size={12} className="animate-spin" />}
                         Save

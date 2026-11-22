@@ -58,7 +58,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
+from django.utils import timezone
 
 from apps.core.utils import round_money
 
@@ -149,13 +150,94 @@ def _bucket(rate, tax, treatment, is_taxable) -> Optional[str]:
     return "nil_vat_needs_class"
 
 
+def _effective_vat_date(inv):
+    """The date this invoice's output VAT is booked in the ledger, or None when it is not
+    booked yet (a fulfil-later sale on "delivery" timing that has not been delivered).
+    Mirrors apps.sales.ledger (vat_now / is_new_style_deferred) and
+    AccountingService.post_sale_journal so the VAT figure and the ledger move together."""
+    from apps.sales import ledger
+
+    if not inv.is_deferred:
+        return inv.issue_date
+    delivered_on = timezone.localtime(inv.fulfilled_at).date() if inv.fulfilled_at else None
+    if ledger.is_new_style_deferred(inv):
+        # raised in two steps: VAT booked when raised, unless the invoice is stamped "delivery"
+        return inv.issue_date if ledger.vat_now(inv) else delivered_on
+    # raised before the two-step posting: everything was booked on delivery
+    return delivered_on
+
+
+def _deposit_lines(organisation, date_from, date_to):
+    """Output VAT booked on money received before the invoice exists (a deposit on a
+    proforma: ledger entries 'sale_deposit'). The ledger books that VAT on the day the
+    money arrives, and later takes it off the invoice's own VAT, so:
+      * returns ({invoice_id: deposit VAT already booked}, lines for deposits in the period);
+      * the invoice's own line is reduced by the first figure in _output_lines.
+    Voided invoices are out (the void reverses every entry the invoice owns)."""
+    from apps.accounting.models import JournalEntry, JournalLine
+    from apps.accounting.services import AccountMappingService
+    from apps.sales.models import SalePayment
+
+    entries = list(JournalEntry.objects.filter(
+        organisation=organisation, source_type="sale_deposit", status=JournalEntry.POSTED,
+        is_deleted=False, entry_date__lte=date_to,
+    ))
+    if not entries:
+        return {}, []
+    try:
+        vat_acct = AccountMappingService.resolve(organisation, "vat_output_account")
+    except Exception:
+        return {}, []
+    pay_by_id = {str(p.id): p for p in SalePayment.objects.filter(
+        organisation=organisation, id__in=[e.source_ref for e in entries],
+    ).select_related("invoice", "invoice__customer")}
+    vat_by_entry = {
+        r["journal_entry_id"]: _d(r["v"]) for r in JournalLine.objects.filter(
+            journal_entry__in=entries, account=vat_acct,
+        ).values("journal_entry_id").annotate(v=Sum("credit"))
+    }
+    per_invoice, lines = {}, []
+    for e in entries:
+        pay = pay_by_id.get(e.source_ref)
+        vat = vat_by_entry.get(e.id, ZERO)
+        if pay is None or vat == ZERO or pay.invoice.status == "voided":
+            continue
+        inv = pay.invoice
+        per_invoice[inv.id] = per_invoice.get(inv.id, ZERO) + vat
+        if date_from <= e.entry_date <= date_to:
+            lines.append(_line(
+                kind="sale", direction="output", document_id=str(inv.id),
+                source_ref=inv.invoice_number, date=e.entry_date,
+                counterparty_name=inv.customer.name if inv.customer else "",
+                counterparty_tin=(inv.customer.tin if inv.customer else "") or "",
+                net_amount=ZERO, vat_amount=vat,
+                reason="VAT on a deposit received before delivery (due when the money arrives)",
+            ))
+    return per_invoice, lines
+
+
 def _output_lines(organisation, date_from, date_to):
     from apps.sales.models import Invoice, SaleItem, SaleReturnItem
 
+    # Which invoices have their VAT due in this period, and on what date. This follows
+    # what the sales ledger books (apps.sales.ledger), so the two cannot disagree:
+    #   * a normal sale: the issue date;
+    #   * a fulfil-later sale stamped "invoice" timing: the issue date (booked when raised);
+    #   * a fulfil-later sale stamped "delivery" timing, or raised before the two-step
+    #     posting existed: the delivery date, and nothing until it is delivered;
+    #   * money received on a proforma (a deposit): see _deposit_lines below.
     inv_qs = Invoice.objects.filter(
         organisation=organisation, status__in=OUTPUT_INVOICE_STATUSES,
-        issue_date__gte=date_from, issue_date__lte=date_to,
+    ).filter(
+        Q(is_deferred=False, issue_date__gte=date_from, issue_date__lte=date_to) | Q(is_deferred=True)
     )
+    vat_date = {}
+    for inv in inv_qs.only("id", "is_deferred", "issue_date", "fulfilled_at", "vat_timing", "organisation_id"):
+        d = _effective_vat_date(inv)
+        if d is not None and date_from <= d <= date_to:
+            vat_date[inv.id] = d
+    inv_qs = Invoice.objects.filter(organisation=organisation, id__in=list(vat_date))
+    deposit_vat_by_invoice, deposit_lines = _deposit_lines(organisation, date_from, date_to)
     item_rows = SaleItem.objects.filter(
         organisation=organisation, invoice__in=inv_qs,
     ).values(
@@ -176,7 +258,7 @@ def _output_lines(organisation, date_from, date_to):
         if r["invoice__status"] == "overdue":
             overdue_vat += tax
         e = per_invoice.setdefault(r["invoice_id"], {
-            "number": r["invoice__invoice_number"], "date": r["invoice__issue_date"],
+            "number": r["invoice__invoice_number"], "date": vat_date[r["invoice_id"]],
             "header_tax": _d(r["invoice__tax_amount"]),
             "customer": r["invoice__customer__name"] or "", "tin": r["invoice__customer__tin"] or "",
             "net": ZERO, "vat": ZERO, "rates": set(),
@@ -187,7 +269,9 @@ def _output_lines(organisation, date_from, date_to):
 
     lines, mismatches = [], []
     for inv_id, e in per_invoice.items():
-        if e["vat"] != e["header_tax"]:
+        header_ok = e["vat"] == e["header_tax"]
+        already = deposit_vat_by_invoice.get(inv_id, ZERO)   # booked earlier, on the deposit
+        if not header_ok:
             mismatches.append({
                 "invoice_number": e["number"], "line_vat": e["vat"], "invoice_vat": e["header_tax"],
                 "difference": e["vat"] - e["header_tax"],
@@ -196,8 +280,9 @@ def _output_lines(organisation, date_from, date_to):
         lines.append(_line(
             kind="sale", direction="output", document_id=str(inv_id), source_ref=e["number"],
             date=e["date"], counterparty_name=e["customer"], counterparty_tin=e["tin"],
-            net_amount=e["net"], vat_amount=e["vat"], vat_rate=rate,
-            reason="Line VAT differs from invoice total" if e["vat"] != e["header_tax"] else "",
+            net_amount=e["net"], vat_amount=e["vat"] - already, vat_rate=rate,
+            reason=("Line VAT differs from invoice total" if not header_ok
+                    else ("Part of the VAT was already counted when the deposit was received" if already else "")),
         ))
 
     # Invoices that carry VAT but have no lines at all: use the header figure, flagged.
@@ -210,11 +295,13 @@ def _output_lines(organisation, date_from, date_to):
         })
         lines.append(_line(
             kind="sale", direction="output", document_id=str(inv.id), source_ref=inv.invoice_number,
-            date=inv.issue_date, counterparty_name=inv.customer.name if inv.customer else "",
+            date=vat_date[inv.id], counterparty_name=inv.customer.name if inv.customer else "",
             counterparty_tin=(inv.customer.tin if inv.customer else "") or "",
-            net_amount=_d(inv.total_amount) - tax, vat_amount=tax,
+            net_amount=_d(inv.total_amount) - tax, vat_amount=tax - deposit_vat_by_invoice.get(inv.id, ZERO),
             reason="Invoice has no lines; invoice total used",
         ))
+
+    lines.extend(deposit_lines)
 
     ret_rows = SaleReturnItem.objects.filter(
         organisation=organisation,
@@ -524,7 +611,7 @@ def _legacy_tax_service_method(organisation, date_from, date_to):
 
 
 def _previous_methods(organisation, date_from, date_to, new_output, new_input, new_net):
-    if date_to >= date.today():
+    if date_to >= timezone.localdate():
         return None  # only closed periods are compared
     a = _legacy_reports_method(organisation, date_from, date_to)
     b = _legacy_tax_service_method(organisation, date_from, date_to)
@@ -665,7 +752,7 @@ def why_it_changed(vat: dict) -> list:
 def comparison_table(organisation, today: Optional[date] = None, months: int = 12) -> list:
     """Closed calendar months of the last `months`: what the two old screens showed
     against the new figure. Words are 'different from', never 'owe' or 'overpaid'."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     y, m = today.year, today.month
     out = []
     for _ in range(months):

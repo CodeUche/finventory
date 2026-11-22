@@ -423,7 +423,7 @@ export default function ExpensesPage() {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Income & Expenses</h1>
-          <p className="text-slate-400 text-sm">{activeTab === 'entries' ? `${expTotal} entries` : 'Organise by folder'}</p>
+          <p className="text-slate-400 text-sm">{activeTab === 'entries' ? `${expTotal} expense ${expTotal === 1 ? 'entry' : 'entries'}` : 'Organise by folder'}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
           <button onClick={() => { bypassNextGets(); loadExpenses() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -523,8 +523,8 @@ export default function ExpensesPage() {
           </div>
 
           {/* Filters */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1 max-w-sm">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+            <div className="relative flex-1 min-w-[12rem] max-w-sm">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 className="input pl-9"
@@ -571,7 +571,7 @@ export default function ExpensesPage() {
                 <select
                   value={periodFilter}
                   onChange={(e) => setPeriodFilter(e.target.value)}
-                  className="input text-sm py-2 min-w-[130px]"
+                  className="input !w-auto text-sm py-2 min-w-[130px]"
                 >
                   <option value="1">Today</option>
                   <option value="7">Last 7 days</option>
@@ -652,7 +652,7 @@ export default function ExpensesPage() {
                           <td className="px-5 py-3.5">
                             <span className={
                               inv.status === 'paid' ? 'badge-green' :
-                              inv.status === 'credit' ? 'badge-yellow' :
+                              inv.status === 'credit' ? 'badge-blue' :
                               inv.status === 'partially_paid' ? 'badge-blue' :
                               'badge-slate'
                             }>{inv.status.replace('_', ' ')}</span>

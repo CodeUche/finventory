@@ -71,7 +71,7 @@ export function SyncStatusBadge() {
         onClick={() => setOpen((v) => !v)}
         className={`relative flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
           hasConflicts
-            ? 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30'
+            ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
             : 'bg-brand-500/20 text-brand-400 hover:bg-brand-500/30'
         }`}
         title={hasConflicts ? `${conflicts.length} sync conflict${conflicts.length > 1 ? 's' : ''} — click to review` : `${pending.length} operation${pending.length > 1 ? 's' : ''} queued for sync`}
@@ -95,7 +95,7 @@ export function SyncStatusBadge() {
                 {pending.length > 0 && `${pending.length} pending`}
                 {pending.length > 0 && conflicts.length > 0 && ' · '}
                 {conflicts.length > 0 && (
-                  <span className="text-orange-400">{conflicts.length} conflict{conflicts.length > 1 ? 's' : ''}</span>
+                  <span className="text-amber-400">{conflicts.length} conflict{conflicts.length > 1 ? 's' : ''}</span>
                 )}
               </p>
             </div>
@@ -113,12 +113,12 @@ export function SyncStatusBadge() {
               </div>
             )}
             {items.map((item) => (
-              <div key={item.id} className={`flex items-start gap-3 px-4 py-3 border-b border-surface-700/50 last:border-0 ${item.status === 'conflict' ? 'bg-orange-500/5' : ''}`}>
+              <div key={item.id} className={`flex items-start gap-3 px-4 py-3 border-b border-surface-700/50 last:border-0 ${item.status === 'conflict' ? 'bg-amber-500/5' : ''}`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white truncate">{formatLabel(item)}</p>
                   <p className="text-xs text-slate-500 mt-0.5">{timeAgo(item.timestamp)}</p>
                   {item.lastError && (
-                    <p className="text-xs text-orange-400 mt-0.5 truncate" title={item.lastError}>
+                    <p className="text-xs text-amber-400 mt-0.5 truncate" title={item.lastError}>
                       {item.lastError}
                     </p>
                   )}
@@ -153,7 +153,7 @@ export function SyncStatusBadge() {
                 onClick={async () => {
                   for (const c of conflicts) await syncEngine.dismiss(c.id)
                 }}
-                className="text-xs text-orange-400 hover:text-orange-300"
+                className="text-xs text-amber-400 hover:text-amber-300"
               >
                 Dismiss all
               </button>

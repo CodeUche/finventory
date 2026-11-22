@@ -57,6 +57,7 @@ class ReturnGLAtomicityTests(TestCase):
             "customer_id": None,
             "warehouse_id": str(self.warehouse.id),
             "payment_method": "cash",
+            "allow_unpaid_walk_in": True,   # these tests record a walk-in sale as unpaid on purpose
             "items": [{"product_id": str(self.product.id), "quantity": 1, "unit_price": "5000.00"}],
         }, format="json")
         self.assertIn(res.status_code, (200, 201), msg=str(res.data))

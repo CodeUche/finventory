@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { ClipboardList, Plus, Minus, Trash2, ClipboardCheck, GitBranch, CreditCard, X, Loader2, Search } from 'lucide-react'
+import { Plus, Minus, Trash2, ClipboardCheck, GitBranch, CreditCard, X, Loader2, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, posApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -175,20 +175,25 @@ export default function RestaurantPOSPage() {
   }
 
   return (
-    <div className="p-4 h-[calc(100vh-3.5rem)] flex flex-col lg:flex-row gap-4">
+    // The page area already has the top bar, breadcrumb and padding, so the height is taken off 100vh
+    // (a bare 100vh-3.5rem pushed the Split and Pay buttons below the screen). Below 1024px the page just scrolls.
+    <div className="ds lg:h-[calc(100vh-14rem)] lg:min-h-[34rem] flex flex-col lg:flex-row gap-4">
       {/* Products */}
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex items-center gap-2 mb-3">
-          <h1 className="text-lg font-bold text-white flex items-center gap-2"><ClipboardList size={18} /> {isRestaurant ? 'Restaurant POS' : 'POS Orders'}</h1>
-          <div className="relative ml-auto w-64 max-w-full">
-            <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
-            <input className="input w-full pl-8" placeholder="Search menu…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <header className="ds-head" style={{ marginBottom: 12 }}>
+          <div>
+            <h1>{isRestaurant ? 'Restaurant POS' : 'POS Orders'}</h1>
+            <p>Tap a product to add it to the order</p>
           </div>
-        </div>
+          <div className="relative w-64 max-w-full">
+            <Search size={14} className="absolute left-3 top-3 text-slate-400" />
+            <input className="input w-full pl-8" placeholder="Search menu…" aria-label="Search menu" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+        </header>
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 overflow-y-auto pr-1">
           {filtered.map((p) => (
             <button key={p.id} onClick={() => addToCart(p)}
-              className="rounded-xl border border-surface-700 bg-surface-800/40 hover:bg-surface-800 p-3 text-left">
+              className="card p-3 text-left hover:shadow-md transition">
               <div className="text-sm font-medium text-white line-clamp-2">{p.name}</div>
               <div className="text-xs text-brand-400 mt-1">{formatCurrency(Number(p.selling_price))}</div>
             </button>
@@ -198,12 +203,12 @@ export default function RestaurantPOSPage() {
       </div>
 
       {/* Order panel */}
-      <div className="w-full lg:w-96 flex flex-col rounded-xl border border-surface-700 bg-surface-900 min-h-0">
+      <div className="card p-0 w-full lg:w-96 flex flex-col min-h-0">
         <div className="p-3 border-b border-surface-700 space-y-2">
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1" role="tablist" aria-label="Order type">
             {orderTypes.map((t) => (
               <button key={t.key} onClick={() => setOrderType(t.key)} disabled={!!orderId}
-                className={`text-xs px-2 py-1 rounded border ${orderType === t.key ? 'bg-brand-600/20 border-brand-500/40 text-white' : 'border-surface-600 text-slate-400'}`}>
+                role="tab" aria-selected={orderType === t.key} className="ds-tab">
                 {t.label}
               </button>
             ))}
@@ -218,7 +223,7 @@ export default function RestaurantPOSPage() {
             <input className="input w-full text-sm" placeholder="Room number" value={roomNumber}
               onChange={(e) => setRoomNumber(e.target.value)} disabled={!!orderId} />
           )}
-          {orderNumber && <div className="text-xs text-slate-400">Order <span className="font-mono text-slate-200">{orderNumber}</span></div>}
+          {orderNumber && <div className="text-xs text-slate-400">Order <span className="text-slate-200">{orderNumber}</span></div>}
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
@@ -254,10 +259,10 @@ export default function RestaurantPOSPage() {
           <div className="flex justify-between text-base font-bold text-white"><span>Total</span><span>{formatCurrency(total)}</span></div>
           <div className={`grid ${isRestaurant ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
             {isRestaurant && (
-              <button onClick={sendToKitchen} disabled={busy} className="btn-secondary text-xs flex items-center justify-center gap-1"><ClipboardCheck size={14} /> KOT</button>
+              <button onClick={sendToKitchen} disabled={busy} className="btn-secondary flex items-center justify-center gap-1"><ClipboardCheck size={14} /> KOT</button>
             )}
-            <button onClick={doSplitBill} disabled={busy} className="btn-secondary text-xs flex items-center justify-center gap-1"><GitBranch size={14} /> Split</button>
-            <button onClick={openPay} disabled={busy} className="btn-primary text-xs flex items-center justify-center gap-1">
+            <button onClick={doSplitBill} disabled={busy} className="btn-secondary flex items-center justify-center gap-1"><GitBranch size={14} /> Split</button>
+            <button onClick={openPay} disabled={busy} className="btn-primary flex items-center justify-center gap-1">
               {busy ? <Loader2 size={14} className="animate-spin" /> : <><CreditCard size={14} /> Pay</>}
             </button>
           </div>

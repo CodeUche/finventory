@@ -1,20 +1,16 @@
 /**
- * AudityLogo — theme-aware brand asset component.
+ * AudityLogo — the designer's blue diamond + wordmark (same artwork as the
+ * top bar and the sign-in screens; see BrandLogo). The old gold-mark SVG files
+ * are no longer used here. Follows the theme and updates instantly on toggle.
  *
- * variant="horizontal"  →  full logo mark + wordmark (3:1 ratio SVG)
- *                           dark mode  → audity-logo-dark.svg  (white text, blue-gold mark)
- *                           light mode → audity-logo-light.svg (navy text, gold mark)
- *
- * variant="icon"        →  square icon mark only (1:1 ratio SVG)
- *                           dark mode  → audity-icon-dark.svg  (dark navy bg)
- *                           light mode → audity-icon-light.svg (light bg)
- *
- * Subscribes to the 'themechange' custom event so it updates instantly when
- * the user toggles the theme without requiring a page reload.
+ * variant="horizontal" -> diamond + AUDITY wordmark
+ * variant="icon"       -> diamond only
  */
 
 import { useState, useEffect } from 'react'
 import { getStoredTheme, type Theme } from '@/hooks/useTheme'
+import BrandLogo from '@/components/BrandLogo'
+import '@/styles/app-shell.css'
 
 interface Props {
   variant?: 'horizontal' | 'icon'
@@ -31,12 +27,12 @@ export default function AudityLogo({ variant = 'horizontal', className, alt = 'A
     return () => window.removeEventListener('themechange', handler)
   }, [])
 
-  // App icon (square mark) is intentionally inverted vs. the theme so the tile
-  // contrasts with the background: light tile on dark UI, dark tile on light UI.
-  // The horizontal wordmark logo still follows the theme (white text on dark).
-  const src = variant === 'icon'
-    ? (theme === 'dark' ? '/audity-icon-light.svg' : '/audity-icon-dark.svg')
-    : (theme === 'dark' ? '/audity-logo-dark.svg' : '/audity-logo-light.svg')
-
-  return <img src={src} alt={alt} className={className} draggable={false} />
+  // The wordmark colour comes from --sh-head, which only exists inside the app shell,
+  // so set it here for the sign-in style pages that have no shell.
+  const style = { ['--sh-head' as string]: theme === 'dark' ? '#FFFFFF' : '#111111', ['--sh-ink' as string]: theme === 'dark' ? '#F4F2FF' : '#1C1B1F' } as React.CSSProperties
+  return (
+    <span className={className} style={{ ...style, display: 'inline-flex', alignItems: 'center' }} aria-label={alt}>
+      <BrandLogo iconOnly={variant === 'icon'} />
+    </span>
+  )
 }

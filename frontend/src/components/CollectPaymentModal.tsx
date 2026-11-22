@@ -270,7 +270,7 @@ export default function CollectPaymentModal({
             {method === 'virtual_account' && (
               account ? (
                 <div className="space-y-3">
-                  <div className="rounded-xl border border-dashed border-amber-500/40 bg-surface-800 p-4 text-center">
+                  <div className="rounded-xl border border-dashed border-brand-500/40 bg-surface-800 p-4 text-center">
                     <p className="text-[10px] uppercase tracking-widest text-slate-500">
                       Transfer exactly this amount to
                     </p>

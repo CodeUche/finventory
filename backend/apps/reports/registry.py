@@ -901,81 +901,110 @@ def _register_defaults() -> None:
     register(ReportDef("cash-flow", "Cash Flow Report", "Financial Statements",
                        cash_flow_report, "Cash in and out over the period."))
     register(ReportDef("balance-sheet", "Balance Sheet", "Financial Statements",
-                       balance_sheet_report, "Assets, liabilities and equity as at the period end.", module="accounting"))
+                       balance_sheet_report, "Assets, liabilities and equity as at the period end.",
+                       module="accounting"))
     register(ReportDef("trial-balance", "Trial Balance", "Financial Statements",
-                       trial_balance_report, "Every account's debit/credit balance as at the period end.", module="accounting"))
+                       trial_balance_report, "Every account's debit/credit balance as at the period end.",
+                       module="accounting"))
     register(ReportDef("vat-return", "Net Tax Report (VAT Return)", "Financial Statements",
-                       vat_return, "Output VAT less input VAT for the period.", module="tax"))
+                       vat_return, "Output VAT less input VAT for the period.",
+                       module="tax"))
     register(ReportDef("tax-summary", "Tax Summary Report", "Financial Statements",
-                       tax_summary_report, "VAT, WHT and PAYE positions for the period.", module="tax"))
+                       tax_summary_report, "VAT, WHT and PAYE positions for the period.",
+                       module="tax"))
     # ── Accountant Reports (auditor / practitioner pack) ──
     register(ReportDef("financial-report-pack", "Financial Report Pack", "Accountant Reports",
-                       financial_report_pack, "Single-entity P&L + Balance Sheet + Trial Balance pack.", module="accounting"))
+                       financial_report_pack, "Single-entity P&L + Balance Sheet + Trial Balance pack.",
+                       module="accounting"))
     register(ReportDef("changes-in-equity", "Statement of Changes in Equity", "Accountant Reports",
-                       statement_of_changes_in_equity, "Opening → movement → closing per equity account.", module="accounting"))
+                       statement_of_changes_in_equity, "Opening → movement → closing per equity account.",
+                       module="accounting"))
     register(ReportDef("notes", "Notes to the Financial Statements", "Accountant Reports",
-                       notes_shell, "Scaffold of the standard IFRS-for-SMEs notes.", module="accounting"))
+                       notes_shell, "Scaffold of the standard IFRS-for-SMEs notes.",
+                       module="accounting"))
 
     # ── General Ledger ──
     register(ReportDef("account-list", "Account List", "General Ledger",
-                       account_list, "Chart of accounts with current balances.", module="accounting"))
+                       account_list, "Chart of accounts with current balances.",
+                       module="accounting"))
     register(ReportDef("cash-register", "Cash Register Report", "General Ledger",
-                       cash_register, "Running-balance register of cash & bank accounts.", module="accounting"))
+                       cash_register, "Running-balance register of cash & bank accounts.",
+                       module="accounting"))
     register(ReportDef("pay-bills", "Pay Bills Report", "General Ledger",
-                       pay_bills_report, "Supplier bill payments made in the period.", module="bills"))
+                       pay_bills_report, "Supplier bill payments made in the period.",
+                       module="bills"))
     register(ReportDef("deposits", "Deposit Report", "General Ledger",
                        deposit_report, "Customer receipts and other income received in the period.", module="accounting"))
     register(ReportDef("gl-detail", "Transaction Report (GL Detail)", "General Ledger",
-                       gl_detail, "Running-balance ledger detail per account.", module="accounting"))
+                       gl_detail, "Running-balance ledger detail per account.",
+                       module="accounting"))
     register(ReportDef("payments", "Payments", "General Ledger",
-                       payments_out_report, "All money paid out: bill payments and expenses.", module="bills", also_modules=("expenses",)))
+                       payments_out_report, "All money paid out: bill payments and expenses.",
+                       module="bills", also_modules=("expenses",)))
     register(ReportDef("journal-register", "Journal Register", "General Ledger",
-                       journal_register, "Every posted journal entry with its lines.", module="accounting"))
+                       journal_register, "Every posted journal entry with its lines.",
+                       module="accounting"))
 
     # ── Accounts Receivable ──
     register(ReportDef("sales-by-customer", "Sales By Customer", "Accounts Receivable",
                        sales_by_customer_report, "Sales totals per customer for the period."))
     register(ReportDef("customers-report", "Customers Report", "Accounts Receivable",
-                       customers_report, "Customer master with contact details and balances.", module="customers"))
+                       customers_report, "Customer master with contact details and balances.",
+                       module="customers"))
     register(ReportDef("customer-receipts", "Customer Receipts", "Accounts Receivable",
-                       customer_receipts, "Receipts from customers in the period.", module="sales"))
+                       customer_receipts, "Receipts from customers in the period.",
+                       module="sales"))
 
     # ── Accounts Payable ──
     register(ReportDef("purchases-report", "Purchases Report", "Accounts Payable",
-                       purchases_report, "Supplier bills raised in the period.", module="bills"))
+                       purchases_report, "Supplier bills raised in the period.",
+                       module="bills"))
     register(ReportDef("purchase-returns", "Purchase Return", "Accounts Payable",
-                       purchase_returns, "Supplier returns / debit notes in the period.", module="purchases"))
+                       purchase_returns, "Supplier returns / debit notes in the period.",
+                       module="purchases"))
     register(ReportDef("product-purchases", "Product Purchases Report", "Accounts Payable",
-                       product_purchases_report, "Purchases grouped by product.", module="purchases"))
+                       product_purchases_report, "Purchases grouped by product.",
+                       module="purchases"))
     register(ReportDef("suppliers-report", "Suppliers Report", "Accounts Payable",
-                       suppliers_report, "Supplier master with outstanding balances.", module="suppliers"))
+                       suppliers_report, "Supplier master with outstanding balances.",
+                       module="suppliers"))
 
     # ── Inventory ──
     register(ReportDef("stock-report", "Stock Report", "Inventory",
-                       stock_report, "Current stock levels per product and warehouse.", module="inventory"))
+                       stock_report, "Current stock levels per product and warehouse.",
+                       module="inventory"))
     register(ReportDef("stock-valuation", "Stock Valuation Report", "Inventory",
-                       stock_valuation_report, "Inventory quantities valued at cost.", module="inventory",
+                       stock_valuation_report, "Inventory quantities valued at cost.",
+                       module="inventory",
                        owner_admin_only=True))
 
     # ── Fixed Assets ──
     register(ReportDef("asset-register", "Asset Register", "Fixed Assets",
-                       asset_register_rpt, "Every asset with cost, accumulated depreciation and NBV.", module="accounting"))
+                       asset_register_rpt, "Every asset with cost, accumulated depreciation and NBV.",
+                       module="accounting"))
     register(ReportDef("assets-by-category", "Asset By Category", "Fixed Assets",
-                       assets_by_category_rpt, "Assets grouped by category.", module="accounting"))
+                       assets_by_category_rpt, "Assets grouped by category.",
+                       module="accounting"))
     register(ReportDef("assets-by-location", "Asset By Location", "Fixed Assets",
-                       assets_by_location_rpt, "Assets grouped by location.", module="accounting"))
+                       assets_by_location_rpt, "Assets grouped by location.",
+                       module="accounting"))
     register(ReportDef("depreciation-report", "Depreciation Report", "Fixed Assets",
-                       depreciation_report, "Posted depreciation entries in the period.", module="accounting"))
+                       depreciation_report, "Posted depreciation entries in the period.",
+                       module="accounting"))
     register(ReportDef("depreciation-method", "Depreciation Method Report", "Fixed Assets",
-                       depreciation_method_report, "Assets grouped by depreciation method.", module="accounting"))
+                       depreciation_method_report, "Assets grouped by depreciation method.",
+                       module="accounting"))
 
     # ── Payroll & HR ──
     register(ReportDef("employee-list", "Employee List", "Payroll & HR",
-                       employee_list, "Active employees with role, department and salary.", module="payroll"))
+                       employee_list, "Active employees with role, department and salary.",
+                       module="payroll"))
     register(ReportDef("payroll-report", "Payroll Report", "Payroll & HR",
-                       payroll_report, "Payroll runs in the period with gross/net/PAYE totals.", module="payroll"))
+                       payroll_report, "Payroll runs in the period with gross/net/PAYE totals.",
+                       module="payroll"))
     register(ReportDef("attendance-summary", "Attendance Summary", "Payroll & HR",
-                       attendance_summary, "Attendance counts per employee for the period.", module="payroll"))
+                       attendance_summary, "Attendance counts per employee for the period.",
+                       module="payroll"))
 
 
 _register_defaults()

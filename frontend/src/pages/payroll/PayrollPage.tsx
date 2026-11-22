@@ -170,7 +170,7 @@ const STATUTORY_ITEMS = (pensionProvider: string, run: PayrollRun) => {
     },
     {
       key: 'pension_emp', label: 'Pension (Employee 8%)', amount: run.total_pension_employee,
-      color: 'text-orange-400',
+      color: 'text-brand-400',
       portal: pfa?.portal ?? 'https://www.pencom.gov.ng', portalLabel: pfa?.name ?? 'PENCOM',
       deadline: 'Remit within 7 days of salary payment',
       bankDetails: {
@@ -181,7 +181,7 @@ const STATUTORY_ITEMS = (pensionProvider: string, run: PayrollRun) => {
     },
     {
       key: 'pension_er', label: 'Pension (Employer 10%)', amount: run.total_pension_employer,
-      color: 'text-yellow-400',
+      color: 'text-sky-400',
       portal: pfa?.portal ?? 'https://www.pencom.gov.ng', portalLabel: pfa?.name ?? 'PENCOM',
       deadline: 'Remit alongside employee contribution within 7 days',
       bankDetails: {
@@ -740,15 +740,15 @@ export default function PayrollPage() {
               </div>
               <div className="card p-4">
                 <p className="text-xs text-slate-400">Pension (Emp)</p>
-                <p className="text-xl font-bold text-orange-400 mt-1">{formatCurrency(latestRun.total_pension_employee)}</p>
+                <p className="text-xl font-bold text-white mt-1">{formatCurrency(latestRun.total_pension_employee)}</p>
               </div>
               <div className="card p-4">
                 <p className="text-xs text-slate-400">Total Net Pay</p>
                 <p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(latestRun.total_net)}</p>
               </div>
-              <div className="card p-4 border border-amber-500/20 bg-amber-500/5">
-                <p className="text-xs text-amber-400 flex items-center gap-1"><TrendingUp size={11} /> Cash Outflow</p>
-                <p className="text-xl font-bold text-amber-300 mt-1">{formatCurrency(totalCashOutflow)}</p>
+              <div className="card p-4">
+                <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingUp size={11} /> Cash Outflow</p>
+                <p className="text-xl font-bold text-white mt-1">{formatCurrency(totalCashOutflow)}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">Net + Employer costs</p>
               </div>
             </div>
@@ -886,15 +886,15 @@ export default function PayrollPage() {
                       </tr>
                       {expandedRun === r.id && (
                         <tr key={`${r.id}-detail`} className="bg-surface-900/50">
-                          <td colSpan={8} className="px-6 py-4">
+                          <td colSpan={8} className="px-6 py-4 max-w-0">
                             {/* Cash outflow breakdown */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 p-3 bg-surface-800/50 rounded-xl border border-surface-700">
                               <div><p className="text-xs text-slate-500">Salaries (Net)</p><p className="text-sm font-mono text-white font-semibold">{formatCurrency(r.total_net)}</p></div>
                               <div><p className="text-xs text-slate-500">PAYE Tax</p><p className="text-sm font-mono text-red-400 font-semibold">{formatCurrency(r.total_paye)}</p></div>
-                              <div><p className="text-xs text-slate-500">Pension (Total)</p><p className="text-sm font-mono text-orange-400 font-semibold">{formatCurrency(parseFloat(r.total_pension_employee ?? '0') + parseFloat(r.total_pension_employer ?? '0'))}</p></div>
+                              <div><p className="text-xs text-slate-500">Pension (Total)</p><p className="text-sm font-mono text-white font-semibold">{formatCurrency(parseFloat(r.total_pension_employee ?? '0') + parseFloat(r.total_pension_employer ?? '0'))}</p></div>
                               <div className="border-l border-surface-600 pl-3">
-                                <p className="text-xs text-amber-400">Total Cash Outflow</p>
-                                <p className="text-sm font-mono text-amber-300 font-bold">
+                                <p className="text-xs text-slate-400">Total Cash Outflow</p>
+                                <p className="text-sm font-mono text-white font-bold">
                                   {formatCurrency(parseFloat(r.total_net ?? '0') + parseFloat(r.total_pension_employer ?? '0') + parseFloat(r.total_nhf ?? '0') + parseFloat(r.total_nsitf ?? '0'))}
                                 </p>
                               </div>
@@ -918,7 +918,7 @@ export default function PayrollPage() {
                                       </td>
                                       <td className="py-2 pr-3 font-mono whitespace-nowrap">
                                         {p.proration_factor && parseFloat(p.proration_factor) < 1 ? (
-                                          <span className="text-sky-400" title="Prorated \u2014 joined or left during this period">
+                                          <span className="text-sky-400" title="Prorated — joined or left during this period">
                                             {parseFloat(p.proration_factor).toFixed(2)}
                                           </span>
                                         ) : (
@@ -928,20 +928,20 @@ export default function PayrollPage() {
                                       <td className="py-2 pr-3 font-mono text-white">{formatCurrency(p.gross_salary)}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400">{parseFloat(p.bonus_amount || '0') > 0 ? formatCurrency(p.bonus_amount) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-teal-400">{parseFloat(p.overtime_amount || '0') > 0 ? formatCurrency(p.overtime_amount) : <span className="text-slate-600">—</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-cyan-400">{parseFloat(p.adjustment_amount || '0') !== 0 ? formatCurrency(p.adjustment_amount ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-cyan-400">{parseFloat(p.adjustment_amount || '0') !== 0 ? formatCurrency(p.adjustment_amount ?? 0) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-red-400">{formatCurrency(p.paye_tax)}</td>
                                       <td className="py-2 pr-3 text-slate-400 whitespace-nowrap">
                                         {p.tax_authority_name
                                           ? p.tax_authority_name.replace(/ (State )?Internal Revenue Service|State Board of Internal Revenue/i, '')
-                                          : <span className="text-amber-500" title="No state of residence set \u2014 PAYE cannot be routed">Unassigned</span>}
+                                          : <span className="text-amber-500" title="No state of residence set — PAYE cannot be routed">Unassigned</span>}
                                       </td>
-                                      <td className="py-2 pr-3 font-mono text-orange-400">{formatCurrency(p.employee_pension)}</td>
+                                      <td className="py-2 pr-3 font-mono text-white">{formatCurrency(p.employee_pension)}</td>
                                       <td className="py-2 pr-3 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
-                                      <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-rose-400">{parseFloat(p.penalty_deductions || '0') > 0 ? formatCurrency(p.penalty_deductions) : <span className="text-slate-600">—</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-amber-400">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">\u2014</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-fuchsia-400">{parseFloat(p.advance_deductions || '0') > 0 ? formatCurrency(p.advance_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-yellow-500">{parseFloat(p.attendance_deduction || '0') > 0 ? formatCurrency(p.attendance_deduction) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-fuchsia-400">{parseFloat(p.advance_deductions || '0') > 0 ? formatCurrency(p.advance_deductions ?? 0) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.attendance_deduction || '0') > 0 ? formatCurrency(p.attendance_deduction) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400 font-semibold">{formatCurrency(p.net_salary)}</td>
                                       <td className="py-2 flex items-center gap-1">
                                         {TRANSFER_STATUS_ICON[p.transfer_status as keyof typeof TRANSFER_STATUS_ICON] ?? null}
@@ -1412,7 +1412,7 @@ export default function PayrollPage() {
             <div className="p-6 border-t border-surface-700 space-y-2">
               {transferResults?.some(r => r.status === 'failed') && (
                 <button onClick={handleRetryFailed} disabled={retrying}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 font-semibold text-sm hover:bg-amber-500/25 disabled:opacity-50">
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-500/15 border border-brand-500/30 text-brand-400 font-semibold text-sm hover:bg-brand-500/25 disabled:opacity-50">
                   {retrying ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
                   Retry Failed Payments
                 </button>
@@ -1578,7 +1578,7 @@ export default function PayrollPage() {
                 const varianceAbs = Math.abs(parseFloat(r.variance))
                 const tone = r.variance_direction === 'exact' || varianceAbs < 100
                   ? 'text-emerald-400'
-                  : r.variance_direction === 'under-withheld' ? 'text-red-400' : 'text-amber-400'
+                  : r.variance_direction === 'under-withheld' ? 'text-red-400' : 'text-brand-400'
                 return (
                   <div key={r.employee_id} className="card p-4 space-y-2">
                     <div className="flex items-center justify-between">
@@ -1766,7 +1766,7 @@ export default function PayrollPage() {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setApproverPickerId(null)} />
           <div className="relative bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-4 z-10">
             <div className="flex items-center justify-between">
-              <h3 className="text-white font-semibold flex items-center gap-2"><Users size={16} className="text-amber-400" /> Send for Approval</h3>
+              <h3 className="text-white font-semibold flex items-center gap-2"><Users size={16} className="text-brand-400" /> Send for Approval</h3>
               <button onClick={() => setApproverPickerId(null)} className="text-slate-500 hover:text-white"><X size={16} /></button>
             </div>
             <p className="text-sm text-slate-400">Select which admin or owner should review and approve this payroll run.</p>
@@ -1818,7 +1818,7 @@ export default function PayrollPage() {
                 </div>
                 <div className="bg-surface-700 rounded-xl p-3">
                   <p className="text-xs text-slate-400 mb-1">Monthly Taxable</p>
-                  <p className="font-mono text-amber-400 font-semibold">₦{parseFloat(selectedPayslip.taxable_income).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
+                  <p className="font-mono text-white font-semibold">₦{parseFloat(selectedPayslip.taxable_income).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
                 </div>
                 <div className="bg-surface-700 rounded-xl p-3">
                   <p className="text-xs text-slate-400 mb-1">Monthly PAYE</p>

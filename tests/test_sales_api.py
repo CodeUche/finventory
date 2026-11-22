@@ -23,6 +23,7 @@ class TestCreateSale:
         ).quantity_on_hand
 
         response = auth_client.post("/api/v1/sales/invoices/", {
+            "allow_unpaid_walk_in": True,   # a walk-in sale recorded unpaid on purpose (manager flag)
             "warehouse_id": str(warehouse.id),
             "payment_method": "cash",
             "items": [
@@ -77,6 +78,7 @@ class TestCreateSale:
         """Recording full payment should mark invoice as PAID."""
         # Create a sale first
         sale_resp = auth_client.post("/api/v1/sales/invoices/", {
+            "allow_unpaid_walk_in": True,   # a walk-in sale recorded unpaid on purpose (manager flag)
             "warehouse_id": str(warehouse.id),
             "payment_method": "bank_transfer",
             "items": [{"product_id": str(stocked_product.id), "quantity": "1"}],
@@ -113,6 +115,7 @@ class TestDeferredFulfillment:
         ).quantity_on_hand
 
         response = auth_client.post("/api/v1/sales/invoices/", {
+            "allow_unpaid_walk_in": True,   # a walk-in sale recorded unpaid on purpose (manager flag)
             "warehouse_id": str(warehouse.id),
             "payment_method": "cash",
             "defer_fulfillment": True,

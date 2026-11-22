@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { asList } from '@/lib/asList'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ChevronDown, ChevronRight, Loader2, Users } from 'lucide-react'
 import { reportApi } from '@/services/api'
@@ -35,7 +36,7 @@ export default function SalesByCustomerPage() {
     setLoading(true)
     try {
       const resp = await reportApi.salesByCustomer(params)
-      setRows(resp.data)
+      setRows(asList<SalesByCustomerRow>(resp.data))
       setExpandedId(null)
     } catch {
       setRows([])
@@ -163,7 +164,7 @@ export default function SalesByCustomerPage() {
                       <td className="px-4 py-3 text-right tabular-nums text-emerald-400 font-medium">{formatCurrency(row.net_sales ?? row.revenue)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-300">{formatCurrency(row.revenue)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-300">{formatCurrency(row.amount_paid)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-amber-400">{formatCurrency(row.amount_outstanding)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-white">{formatCurrency(row.amount_outstanding)}</td>
                     </tr>
 
                     {open && (
@@ -197,7 +198,7 @@ export default function SalesByCustomerPage() {
                                     </td>
                                     <td className="py-1.5 pr-4 text-right tabular-nums text-slate-200">{formatCurrency(inv.total_amount)}</td>
                                     <td className="py-1.5 pr-4 text-right tabular-nums text-slate-300">{formatCurrency(inv.amount_paid)}</td>
-                                    <td className="py-1.5 text-right tabular-nums text-amber-400">{formatCurrency(inv.amount_due)}</td>
+                                    <td className="py-1.5 text-right tabular-nums text-white">{formatCurrency(inv.amount_due)}</td>
                                   </tr>
                                 ))}
                               </tbody>

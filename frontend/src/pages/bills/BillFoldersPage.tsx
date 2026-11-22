@@ -1,10 +1,12 @@
+import DateInput from '@/components/DateInput'
 import { useEffect, useState, useCallback } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Folder, FolderOpen, FolderPlus, ChevronRight, Home,
-  Trash2, Edit2, Loader2, X, Plus, ArrowLeft,
+  Trash2, Edit2, Loader2, X, Plus, ArrowLeft, ArrowUpRight,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { billApi } from '@/services/api'
@@ -42,11 +44,12 @@ const STATUS_COLOR: Record<string, string> = {
   received: 'badge-slate',
   draft: 'badge-slate',
   overdue: 'badge-red',
-  partially_paid: 'badge-orange',
+  partially_paid: 'badge-yellow',
   voided: 'badge-red',
 }
 
 export default function BillFoldersPage() {
+  const mounted = useIsMounted()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const currentFolderId = searchParams.get('folder') ?? null
@@ -76,7 +79,7 @@ export default function BillFoldersPage() {
         setBills([])
       }
     } catch {
-      toast.error('Failed to load folder contents')
+      { if (mounted.current) toast.error('Failed to load folder contents') }
     } finally {
       setLoading(false)
     }
@@ -155,53 +158,49 @@ export default function BillFoldersPage() {
             </button>
           )}
           <div>
-            <h1 className="text-2xl font-bold text-white">
-              {currentFolder ? currentFolder.name : 'Bill Folders'}
-            </h1>
-            <p className="text-slate-400 text-sm">
-              {currentFolder
-                ? `Folder · ${currentFolder.bills_count} bill${currentFolder.bills_count !== 1 ? 's' : ''}`
-                : 'Organise your bills into folders for easy retrieval'}
-            </p>
+            <h1 className="text-2xl font-bold text-white">Bill Folders</h1>
+            <p className="text-slate-400 text-sm">Organize bills into folders for easy access.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={openCreateFolder} className="btn-secondary flex items-center gap-2">
-            <FolderPlus size={15} /> New Folder
+          <button onClick={openCreateFolder} className={`${currentFolderId ? "btn-secondary" : "btn-primary"} flex items-center gap-2`}>
+            <FolderPlus size={15} /> Create New Folder
           </button>
           {currentFolderId && (
             <button
               onClick={() => navigate(`/bills?openNew=1&folder=${currentFolderId}`)}
               className="btn-primary flex items-center gap-2"
             >
-              <Plus size={15} /> New Bill in Folder
+              <Plus size={15} /> Add New Bill In Folder
             </button>
           )}
         </div>
       </div>
 
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-1.5 text-sm text-slate-400 flex-wrap">
-        <button onClick={() => navigate('/bills')} className="flex items-center gap-1 hover:text-white transition-colors">
-          <ArrowLeft size={13} /> Bills
+      {/* Folder trail: only inside a folder. At the top level the top bar already shows the path (it used to show twice). */}
+      {currentFolder && (
+      <nav aria-label="Folder trail" className="ds-proc-crumb">
+        <button onClick={() => navigate('/bills')} className="flex items-center gap-1">
+          <ArrowLeft size={13} aria-hidden="true" /> Bills
         </button>
-        <span className="text-slate-600">/</span>
-        <button onClick={goHome} className="flex items-center gap-1 hover:text-white transition-colors">
-          <Home size={13} /> Bill Folders
+        <ChevronRight size={13} aria-hidden="true" />
+        <button onClick={goHome} className="flex items-center gap-1">
+          <Home size={13} aria-hidden="true" /> Bill Folders
         </button>
         {ancestors.map((a) => (
           <span key={a.id} className="flex items-center gap-1.5">
             <ChevronRight size={13} />
-            <button onClick={() => goToAncestor(a.id)} className="hover:text-white transition-colors">{a.name}</button>
+            <button onClick={() => goToAncestor(a.id)}>{a.name}</button>
           </span>
         ))}
         {currentFolder && (
           <span className="flex items-center gap-1.5">
             <ChevronRight size={13} />
-            <span className="text-white font-medium">{currentFolder.name}</span>
+            <span className="font-medium" aria-current="page">{currentFolder.name}</span>
           </span>
         )}
-      </div>
+      </nav>
+      )}
 
       {loading ? (
         <div className="py-16 text-center"><Loader2 size={28} className="animate-spin mx-auto text-brand-400" /></div>
@@ -210,35 +209,32 @@ export default function BillFoldersPage() {
           {/* Sub-folders */}
           {children.length > 0 && (
             <div>
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Folders</h3>
+              <h3 className="ds-proc-section-title">Folders</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {children.map((f) => (
-                  <div
-                    key={f.id}
-                    onClick={() => openFolder(f.id)}
-                    className="card p-4 cursor-pointer hover:border-brand-500/50 transition-all group"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center shrink-0">
+                  <div key={f.id} className="relative group">
+                    <button type="button" onClick={() => openFolder(f.id)} className="ds-proc-folder">
+                      <span className="ds-proc-folder-ico">
                         {f.children_count > 0 || f.bills_count > 0
-                          ? <FolderOpen size={20} className="text-brand-400" />
-                          : <Folder size={20} className="text-brand-400" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-white text-sm truncate">{f.name}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {f.children_count} sub-folder{f.children_count !== 1 ? 's' : ''} · {f.bills_count} bill{f.bills_count !== 1 ? 's' : ''}
-                        </p>
-                        {f.folder_date && <p className="text-xs text-slate-600 mt-0.5">{formatDate(f.folder_date)}</p>}
-                      </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => openEditFolder(f, e)} className="btn-ghost p-1 text-slate-500 hover:text-white">
-                          <Edit2 size={12} />
-                        </button>
-                        <button onClick={(e) => handleDeleteFolder(f, e)} className="btn-ghost p-1 text-slate-500 hover:text-red-400">
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
+                          ? <FolderOpen size={20} aria-hidden="true" />
+                          : <Folder size={20} aria-hidden="true" />}
+                      </span>
+                      <span className="flex-1 min-w-0 block">
+                        <span className="block font-semibold text-white truncate pr-6">{f.name}</span>
+                        <span className="block text-xs text-slate-400 mt-1">
+                          ({f.children_count}) Sub-folder{f.children_count !== 1 ? 's' : ''} · ({f.bills_count}) Bill{f.bills_count !== 1 ? 's' : ''}
+                        </span>
+                        {f.folder_date && <span className="block text-xs text-slate-400 mt-0.5">{formatDate(f.folder_date)}</span>}
+                      </span>
+                      <ArrowUpRight size={16} className="absolute top-3 right-3 text-slate-300" aria-hidden="true" />
+                    </button>
+                    <div className="absolute bottom-2 right-2 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      <button onClick={(e) => openEditFolder(f, e)} className="btn-ghost p-1.5" title="Edit folder" aria-label={`Edit folder ${f.name}`}>
+                        <Edit2 size={13} />
+                      </button>
+                      <button onClick={(e) => handleDeleteFolder(f, e)} className="btn-ghost p-1.5 text-red-400" title="Delete folder" aria-label={`Delete folder ${f.name}`}>
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -249,7 +245,12 @@ export default function BillFoldersPage() {
           {/* Bills in this folder */}
           {currentFolder && bills.length > 0 && (
             <div>
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Bills in this folder</h3>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h3 className="ds-proc-section-title !mb-0">Bills In This Folder</h3>
+                <button onClick={(e) => openEditFolder(currentFolder, e)} className="btn-ghost flex items-center gap-1.5 text-sm">
+                  <Edit2 size={14} aria-hidden="true" /> Edit Folder
+                </button>
+              </div>
               <div className="card p-0 overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
@@ -280,19 +281,19 @@ export default function BillFoldersPage() {
           )}
 
           {children.length === 0 && bills.length === 0 && (
-            <div className="py-16 text-center">
-              <Folder size={40} className="mx-auto mb-3 text-slate-600" />
-              <p className="text-slate-400 font-medium mb-1">
-                {currentFolder ? 'This folder is empty' : 'No folders yet'}
+            <div className="ds-empty">
+              <Folder size={40} aria-hidden="true" />
+              <p className="font-medium">
+                {currentFolder ? 'This folder is empty' : 'No Bill Folder Found'}
               </p>
-              <p className="text-slate-600 text-sm">
+              <p className="text-sm" style={{ color: 'var(--ds-ink)' }}>
                 {currentFolder
                   ? 'Create sub-folders or add bills directly to this folder.'
                   : 'Create a folder to start organising your bills by month, year, project, etc.'}
               </p>
               <div className="flex items-center justify-center gap-2 mt-4">
                 <button onClick={openCreateFolder} className="btn-secondary inline-flex items-center gap-2">
-                  <FolderPlus size={14} /> Create Folder
+                  <FolderPlus size={14} /> Create New Folder
                 </button>
                 {currentFolderId && (
                   <button
@@ -327,7 +328,7 @@ export default function BillFoldersPage() {
               </div>
               <div>
                 <label className="label">Folder Date</label>
-                <input type="date" className="input" value={folderForm.folder_date} onChange={(e) => setFolderForm((f) => ({ ...f, folder_date: e.target.value }))} />
+                <DateInput className="w-full" value={folderForm.folder_date} onChange={(iso) => setFolderForm((f) => ({ ...f, folder_date: iso }))} />
               </div>
               {currentFolder && (
                 <p className="text-xs text-slate-500 flex items-center gap-1.5">
