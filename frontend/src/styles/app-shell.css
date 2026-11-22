@@ -154,7 +154,32 @@ html.light body .app-shell.app-shell{
   border:1.5px solid var(--sh-active-bar);color:var(--sh-active-bar);transition:.16s;
 }
 .sh-collapse:hover{background:color-mix(in srgb,var(--sh-active-bar) 16%,transparent)}
-.sh-foot{border-top:1px solid var(--sh-line);padding:10px 12px 12px;display:flex;flex-direction:column;gap:2px;flex:none}
+.sh-foot{border-top:1px solid var(--sh-line);padding:2px 12px 8px;display:flex;flex-direction:column;gap:0;flex:none}
+.sh-foot-handle{
+  display:flex;align-items:center;justify-content:center;width:100%;height:20px;border:0;background:none;border-radius:6px;
+  color:var(--sh-muted);cursor:pointer;opacity:.7;transition:opacity .16s,background .16s;
+}
+.sh-foot-handle:hover{opacity:1;background:var(--sh-row-hover)}
+.sh-foot-chev{transition:transform .16s}
+.sh-foot-chev-up{transform:rotate(180deg)}
+.sh-foot-list{display:flex;flex-direction:column;gap:0}
+.sh-foot-row{
+  display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:0 10px;border-radius:8px;border:0;background:none;
+  color:var(--sh-muted);font:inherit;font-size:13px;font-weight:400;text-align:left;text-decoration:none;cursor:pointer;
+  transition:background .16s,color .16s;
+}
+.sh-foot-row:hover{background:var(--sh-row-hover);color:var(--sh-ink)}
+.sh-foot-row-on{color:var(--sh-active-tx);background:var(--sh-active-bg)}
+.sh-foot-danger,.sh-foot-danger:hover{color:var(--sh-danger)}
+.sh-foot-danger:hover{background:color-mix(in srgb,var(--sh-danger) 10%,transparent)}
+.sh-foot-row:focus-visible,.sh-foot-handle:focus-visible{outline:2px solid var(--sh-active-bar);outline-offset:1px}
+.sh-foot-icons .sh-foot-list{flex-direction:row;justify-content:center;gap:4px}
+.sh-foot-icons .sh-foot-row{width:36px;min-height:36px;padding:0;justify-content:center}
+@media(max-width:1023px){
+  .sh-foot-row{min-height:44px}
+  .sh-foot-icons .sh-foot-row{width:44px;min-height:44px}
+  .sh-foot-handle{height:28px}
+}
 
 /* ---- collapsed (icon rail) — desktop only, mirrors the old mini behaviour:
    group headers, labels, org badge and the reports/settings trees hide; the
@@ -168,6 +193,7 @@ html.light body .app-shell.app-shell{
   aside[data-mini="true"].sh-aside .sh-sub{margin:0;padding:0;border:0}
   aside[data-mini="true"].sh-aside .sh-collapse{position:static;transform:none;margin:2px auto 6px}
   aside[data-mini="true"].sh-aside .sh-row-on::before{display:none}
+  aside[data-mini="true"].sh-aside .sh-foot-icons .sh-foot-list{flex-direction:column;align-items:center}
 }
 
 /* ---- responsive ---- */
