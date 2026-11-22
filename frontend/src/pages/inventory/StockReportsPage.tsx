@@ -545,8 +545,8 @@ export default function StockReportsPage() {
   const { organisation } = useAuthStore()
 
   // Chart colours come from the shared chart kit (same in dark and light).
-  const { light: isLight, tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid: chartGrid, cursor, legendColor } = useChartKit()
-  const reorderFill  = isLight ? '#1e3a5f' : '#A9A6C4'
+  const { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid: chartGrid, cursor, legendColor } = useChartKit()
+  const reorderFill  = DS_CHART.neutral
   // ─────────────────────────────────────────────────────────────────────────────
 
   const [tab, setTab] = useState<ReportTab>('availability')
@@ -778,17 +778,13 @@ export default function StockReportsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex flex-wrap gap-1 bg-surface-800 border border-surface-700 rounded-xl p-1 w-fit">
+      <div className="ds-tabs !mb-0">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => handleTabChange(t.id)}
-            className={[
-              'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
-              tab === t.id
-                ? 'bg-brand-500 text-white shadow'
-                : 'text-slate-400 hover:text-slate-200',
-            ].join(' ')}
+            className={`ds-tab flex items-center gap-2 ${tab === t.id ? 'is-active' : ''}`}
+            aria-pressed={tab === t.id}
           >
             <t.icon size={15} />
             {t.label}
@@ -848,23 +844,24 @@ export default function StockReportsPage() {
           {/* Summary tiles */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { label: 'In Stock', value: stats.ok, icon: CheckCircle, color: 'text-emerald-400', filter: 'ok' },
-              { label: 'Low Stock', value: stats.low, icon: AlertTriangle, color: 'text-amber-400', filter: 'low' },
-              { label: 'Out of Stock', value: stats.out, icon: XCircle, color: 'text-red-400', filter: 'out_of_stock' },
-              { label: 'Overstocked', value: stats.over, icon: TrendingDown, color: 'text-blue-400', filter: 'overstocked' },
+              { label: 'In Stock', value: stats.ok, icon: CheckCircle, color: 'text-emerald-400', tone: 'good', filter: 'ok' },
+              { label: 'Low Stock', value: stats.low, icon: AlertTriangle, color: 'text-amber-400', tone: 'warn', filter: 'low' },
+              { label: 'Out of Stock', value: stats.out, icon: XCircle, color: 'text-red-400', tone: 'bad', filter: 'out_of_stock' },
+              { label: 'Overstocked', value: stats.over, icon: TrendingDown, color: 'text-blue-400', tone: 'link', filter: 'overstocked' },
             ].map((s) => (
               <button
                 key={s.filter}
                 onClick={() => setStatusFilter(statusFilter === s.filter ? 'all' : s.filter)}
+                data-tone={s.tone}
                 className={[
-                  'card flex items-center gap-3 cursor-pointer hover:border-brand-500/40 transition-all text-left',
-                  statusFilter === s.filter ? 'ring-2 ring-brand-500/50 border-brand-500/40' : '',
+                  'rp-tile !flex-row items-center gap-3 cursor-pointer transition-all text-left',
+                  statusFilter === s.filter ? 'ring-2 ring-[color:var(--ds-link)]' : '',
                 ].join(' ')}
               >
-                <s.icon size={20} className={s.color} />
+                <s.icon size={22} className={s.color} />
                 <div>
-                  <p className="text-lg font-bold text-white">{s.value}</p>
-                  <p className="text-xs text-slate-400">{s.label}</p>
+                  <p className="rp-tile-value">{s.value}</p>
+                  <p className="rp-tile-label">{s.label}</p>
                 </div>
               </button>
             ))}
@@ -875,7 +872,7 @@ export default function StockReportsPage() {
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-4">
                 <BarChart2 size={17} className="text-brand-400" />
-                <h2 className="text-sm font-semibold text-white">Stock Level vs Reorder Level (Top 20)</h2>
+                <h2 className="rp-title">Stock Level vs Reorder Level (Top 20)</h2>
               </div>
               <ResponsiveContainer width="100%" height={Math.min(500, availabilityChartData.length * 28 + 40)}>
                 <BarChart
@@ -1044,11 +1041,11 @@ export default function StockReportsPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setShowUsageTx(false)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!showUsageTx ? 'bg-brand-500/20 text-brand-400 border border-brand-500/40' : 'text-slate-400 hover:bg-surface-700'}`}
+                className={`ds-tab !py-1.5 !text-sm ${!showUsageTx ? 'is-active' : ''}`}
               >Summary</button>
               <button
                 onClick={() => setShowUsageTx(true)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${showUsageTx ? 'bg-brand-500/20 text-brand-400 border border-brand-500/40' : 'text-slate-400 hover:bg-surface-700'}`}
+                className={`ds-tab !py-1.5 !text-sm ${showUsageTx ? 'is-active' : ''}`}
               >Transactions ({usageTransactions.length})</button>
             </div>
             <ExportBar
@@ -1063,7 +1060,7 @@ export default function StockReportsPage() {
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-4">
                 <BarChart2 size={17} className="text-brand-400" />
-                <h2 className="text-sm font-semibold text-white">Top Products by Units Consumed</h2>
+                <h2 className="rp-title">Top Products by Units Consumed</h2>
               </div>
               <ResponsiveContainer width="100%" height={Math.min(420, usageChartData.length * 28 + 40)}>
                 <BarChart
@@ -1138,7 +1135,7 @@ export default function StockReportsPage() {
                       <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{row.warehouse}</td>
                       <td className="px-4 py-3 text-right font-semibold text-red-400 text-xs">{row.quantity}</td>
                       <td className="px-4 py-3 text-right text-slate-400 text-xs">{row.unit_cost || '—'}</td>
-                      <td className="px-4 py-3 text-slate-400 text-xs font-mono">{row.invoice_no || '—'}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs rp-nums">{row.invoice_no || '—'}</td>
                       <td className="px-4 py-3 text-slate-400 text-xs">{row.customer || <span className="text-slate-600">Walk-in</span>}</td>
                       <td className="px-4 py-3 text-slate-400 text-xs">{row.batch_number || '—'}</td>
                       <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{row.sold_by || '—'}</td>
@@ -1184,10 +1181,10 @@ export default function StockReportsPage() {
                   <tr key={row.id} className="hover:bg-surface-700/30 transition-colors">
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap text-xs">{row.date}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        row.movement_type === 'purchase_in' ? 'bg-emerald-500/15 text-emerald-400'
-                        : row.movement_type === 'transfer_in' ? 'bg-brand-500/15 text-brand-400'
-                        : 'bg-amber-500/15 text-amber-400'
+                      <span className={`badge ${
+                        row.movement_type === 'purchase_in' ? 'badge-green'
+                        : row.movement_type === 'transfer_in' ? 'badge-blue'
+                        : 'badge-yellow'
                       }`}>{row.movement_label || MOVEMENT_LABEL[row.movement_type] || row.movement_type}</span>
                     </td>
                     <td className="px-4 py-3 min-w-[140px]">
@@ -1206,7 +1203,7 @@ export default function StockReportsPage() {
                       ) : null}
                       {row.batch_expiry ? <p className="text-slate-500 text-xs">{row.batch_expiry}</p> : (!row.batch_number && <span className="text-slate-600">—</span>)}
                     </td>
-                    <td className="px-4 py-3 text-slate-400 text-xs font-mono whitespace-nowrap">{row.reference || '—'}</td>
+                    <td className="px-4 py-3 text-slate-400 text-xs rp-nums whitespace-nowrap">{row.reference || '—'}</td>
                     <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{row.received_by || '—'}</td>
                   </tr>
                 ))}
@@ -1220,7 +1217,7 @@ export default function StockReportsPage() {
       {loaded && tab === 'stock_card' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-white">{cardProductName} <span className="text-slate-500 font-mono text-xs ml-1">{cardProductSku}</span></p>
+            <p className="text-sm font-semibold text-white">{cardProductName} <span className="text-slate-500 rp-nums text-xs ml-1">{cardProductSku}</span></p>
             <ExportBar
               onPDF={() => exportStockCardPDF(cardRows, cardProductName, cardProductSku, organisation)}
               onExcel={() => exportStockCardExcel(cardRows, cardProductSku)}
@@ -1258,7 +1255,7 @@ export default function StockReportsPage() {
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-white">{row.balance}</td>
                     <td className="px-4 py-3 text-right text-slate-400 text-xs whitespace-nowrap">{row.unit_cost || '—'}</td>
-                    <td className="px-4 py-3 text-slate-400 text-xs font-mono whitespace-nowrap">{row.invoice_no || '—'}</td>
+                    <td className="px-4 py-3 text-slate-400 text-xs rp-nums whitespace-nowrap">{row.invoice_no || '—'}</td>
                     <td className="px-4 py-3 text-slate-400 text-xs">{row.batch_number || '—'}</td>
                     <td className="px-4 py-3 text-slate-400 text-xs">{row.remark}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{row.created_by || '—'}</td>
@@ -1288,19 +1285,19 @@ export default function StockReportsPage() {
             <>
               {/* Summary strip */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <div className="card py-3">
-                  <p className="text-xs text-slate-500 mb-0.5">Total Inventory Value</p>
-                  <p className="text-xl font-bold text-emerald-400">{formatMoney(valuation.total_inventory_value)}</p>
+                <div className="rp-tile" data-tone="good">
+                  <p className="rp-tile-label">Total Inventory Value</p>
+                  <p className="rp-tile-value">{formatMoney(valuation.total_inventory_value)}</p>
                 </div>
-                <div className="card py-3">
-                  <p className="text-xs text-slate-500 mb-0.5">Product Lines</p>
-                  <p className="text-xl font-bold text-white">
+                <div className="rp-tile">
+                  <p className="rp-tile-label">Product Lines</p>
+                  <p className="rp-tile-value">
                     {new Set(valuation.items.map((i) => i.sku)).size}
                   </p>
                 </div>
-                <div className="card py-3">
-                  <p className="text-xs text-slate-500 mb-0.5">Stock Records</p>
-                  <p className="text-xl font-bold text-white">{valuation.items.length}</p>
+                <div className="rp-tile">
+                  <p className="rp-tile-label">Stock Records</p>
+                  <p className="rp-tile-value">{valuation.items.length}</p>
                 </div>
               </div>
 
@@ -1312,7 +1309,7 @@ export default function StockReportsPage() {
                   <div className="card p-5">
                     <div className="flex items-center gap-2 mb-4">
                       <PieIcon size={17} className="text-brand-400" />
-                      <h2 className="text-sm font-semibold text-white">Inventory Value by Product</h2>
+                      <h2 className="rp-title">Inventory Value by Product</h2>
                     </div>
                     <ResponsiveContainer width="100%" height={240}>
                       <PieChart>
@@ -1337,7 +1334,7 @@ export default function StockReportsPage() {
                   <div className="card p-5">
                     <div className="flex items-center gap-2 mb-4">
                       <BarChart2 size={17} className="text-emerald-400" />
-                      <h2 className="text-sm font-semibold text-white">Top Products by Inventory Value</h2>
+                      <h2 className="rp-title">Top Products by Inventory Value</h2>
                     </div>
                     <ResponsiveContainer width="100%" height={240}>
                       <BarChart
@@ -1394,7 +1391,7 @@ export default function StockReportsPage() {
                       valuation.items.map((row, i) => (
                         <tr key={i} className="hover:bg-surface-700/30 transition-colors">
                           <td className="px-4 py-3 font-medium text-white">{row.product}</td>
-                          <td className="px-4 py-3 text-slate-400 font-mono text-xs">{row.sku}</td>
+                          <td className="px-4 py-3 text-slate-400 rp-nums text-xs">{row.sku}</td>
                           <td className="px-4 py-3 text-slate-400 text-xs">{row.warehouse}</td>
                           <td className="px-4 py-3 text-right font-semibold text-white tabular-nums">{row.quantity}</td>
                           <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{formatMoney(row.unit_cost)}</td>

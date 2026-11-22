@@ -93,34 +93,34 @@ export default function SalesByCustomerPage() {
       {/* Summary strip */}
       {!loading && rows.length > 0 && (
         <div className="flex gap-4 flex-wrap">
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Customers</p>
-            <p className="text-lg font-semibold text-white">{rows.length}</p>
+          <div className="rp-tile">
+            <p className="rp-tile-label">Customers</p>
+            <p className="rp-tile-value">{rows.length}</p>
           </div>
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Net sales (excl. VAT, after returns)</p>
-            <p className="text-lg font-semibold text-emerald-400">{formatCurrency(totalNet)}</p>
+          <div className="rp-tile" data-tone="good">
+            <p className="rp-tile-label">Net sales (excl. VAT, after returns)</p>
+            <p className="rp-tile-value">{formatCurrency(totalNet)}</p>
           </div>
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Billed (incl. VAT)</p>
-            <p className="text-lg font-semibold text-slate-200">{formatCurrency(totalBilled)}</p>
+          <div className="rp-tile">
+            <p className="rp-tile-label">Billed (incl. VAT)</p>
+            <p className="rp-tile-value">{formatCurrency(totalBilled)}</p>
           </div>
         </div>
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-surface-700">
+      <div className="overflow-x-auto rp-frame">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-surface-800 border-b border-surface-700">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide w-8" />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">Code</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Invoices</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Net sales</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Billed (incl. VAT)</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Paid</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Outstanding</th>
+            <tr>
+              <th className="px-4 py-3 text-left w-8" />
+              <th className="px-4 py-3 text-left">Customer</th>
+              <th className="px-4 py-3 text-left">Code</th>
+              <th className="px-4 py-3 text-right">Invoices</th>
+              <th className="px-4 py-3 text-right">Net sales</th>
+              <th className="px-4 py-3 text-right">Billed (incl. VAT)</th>
+              <th className="px-4 py-3 text-right">Paid</th>
+              <th className="px-4 py-3 text-right">Outstanding</th>
             </tr>
           </thead>
           <tbody>
@@ -191,7 +191,7 @@ export default function SalesByCustomerPage() {
                               <tbody>
                                 {(detail[key] ?? []).map(inv => (
                                   <tr key={inv.id} className="border-b border-surface-700/50 last:border-0">
-                                    <td className="py-1.5 pr-4 text-brand-400 font-mono">{inv.invoice_number}</td>
+                                    <td className="py-1.5 pr-4 text-brand-400 rp-nums">{inv.invoice_number}</td>
                                     <td className="py-1.5 pr-4 text-slate-300">{formatDate(inv.issue_date)}</td>
                                     <td className={`py-1.5 pr-4 capitalize ${STATUS_COLOR[inv.status] ?? 'text-slate-400'}`}>
                                       {inv.status.replace('_', ' ')}

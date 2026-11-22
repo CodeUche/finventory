@@ -142,21 +142,21 @@ export default function SalesByProductPage() {
       {/* Summary strip */}
       {!loading && rows.length > 0 && (
         <div className="flex gap-4 flex-wrap">
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Products</p>
-            <p className="text-lg font-semibold text-white">{rows.length}</p>
+          <div className="rp-tile">
+            <p className="rp-tile-label">Products</p>
+            <p className="rp-tile-value">{rows.length}</p>
           </div>
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Units Sold</p>
-            <p className="text-lg font-semibold text-white">{totalUnits.toLocaleString()}</p>
+          <div className="rp-tile">
+            <p className="rp-tile-label">Units Sold</p>
+            <p className="rp-tile-value">{totalUnits.toLocaleString()}</p>
           </div>
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Total Revenue</p>
-            <p className="text-lg font-semibold text-emerald-400">{formatCurrency(totalRevenue)}</p>
+          <div className="rp-tile" data-tone="good">
+            <p className="rp-tile-label">Total Revenue</p>
+            <p className="rp-tile-value">{formatCurrency(totalRevenue)}</p>
           </div>
-          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Gross Profit</p>
-            <p className={`text-lg font-semibold ${totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+          <div className="rp-tile" data-tone={totalProfit >= 0 ? 'good' : 'bad'}>
+            <p className="rp-tile-label">Gross Profit</p>
+            <p className="rp-tile-value">
               {formatCurrency(totalProfit)}
             </p>
           </div>
@@ -171,7 +171,7 @@ export default function SalesByProductPage() {
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-4">
               <BarChart2 size={17} className="text-brand-400" />
-              <h2 className="text-sm font-semibold text-white">Top 10 Products: Revenue vs Gross Profit</h2>
+              <h2 className="rp-title">Top 10 Products: Revenue vs Gross Profit</h2>
             </div>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart
@@ -204,7 +204,7 @@ export default function SalesByProductPage() {
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-1">
               <TrendingUp size={17} className="text-emerald-400" />
-              <h2 className="text-sm font-semibold text-white">Margin Map: Revenue vs Gross Margin %</h2>
+              <h2 className="rp-title">Margin Map: Revenue vs Gross Margin %</h2>
             </div>
             <p className="text-xs text-slate-500 mb-4">
               Each dot = one product. Right = more revenue. Up = higher margin. Ideal = top-right.
@@ -268,18 +268,18 @@ export default function SalesByProductPage() {
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-surface-700">
+      <div className="overflow-x-auto rp-frame">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-surface-800 border-b border-surface-700">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide w-8" />
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">Product</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">SKU</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Units Sold</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Revenue</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">COGS</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Gross Profit</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Margin</th>
+            <tr>
+              <th className="px-4 py-3 text-left w-8" />
+              <th className="px-4 py-3 text-left">Product</th>
+              <th className="px-4 py-3 text-left">SKU</th>
+              <th className="px-4 py-3 text-right">Units Sold</th>
+              <th className="px-4 py-3 text-right">Revenue</th>
+              <th className="px-4 py-3 text-right">COGS</th>
+              <th className="px-4 py-3 text-right">Gross Profit</th>
+              <th className="px-4 py-3 text-right">Margin</th>
             </tr>
           </thead>
           <tbody>
@@ -322,7 +322,7 @@ export default function SalesByProductPage() {
                         }
                       </td>
                       <td className="px-4 py-3 text-slate-200 font-medium">{row.product_name}</td>
-                      <td className="px-4 py-3 text-slate-400 font-mono text-xs">
+                      <td className="px-4 py-3 text-slate-400 rp-nums text-xs">
                         {row.product_sku || <span className="text-slate-600">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-300">
@@ -368,7 +368,7 @@ export default function SalesByProductPage() {
                               <tbody>
                                 {(detail[key] ?? []).map((line, li) => (
                                   <tr key={li} className="border-b border-surface-700/50 last:border-0">
-                                    <td className="py-1.5 pr-4 text-brand-400 font-mono">{line.invoice_number}</td>
+                                    <td className="py-1.5 pr-4 text-brand-400 rp-nums">{line.invoice_number}</td>
                                     <td className="py-1.5 pr-4 text-slate-300">{formatDate(line.issue_date)}</td>
                                     <td className="py-1.5 pr-4 text-slate-300">{line.customer_name}</td>
                                     <td className="py-1.5 pr-4 text-right tabular-nums text-slate-200">
