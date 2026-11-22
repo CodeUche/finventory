@@ -99,3 +99,6 @@ Thumbs.db
 frontend/e2e/.auth/
 frontend/test-results/
 frontend/playwright-report/
+
+# Windows cache folder that a Docker copy can leave inside backend/ on this machine
+backend/%SystemDrive%/
