@@ -90,8 +90,7 @@ class CorrectedProfitTests(PnlBase):
         self.assertEqual(p["cost_of_goods_sold"], D("1200"))
         self.assertEqual(p["operating_expenses_breakdown"], {
             "logged_expenses": D("100000"), "supplier_bills": D("300000"),
-            "payroll": D("218000"), "depreciation": D("10000"), "stock_adjustments": D("0"),
-            "other_postings": D("0")})
+            "payroll": D("218000"), "depreciation": D("10000"), "other_postings": D("0")})
         self.assertEqual(p["operating_expenses"], D("628000"))
         # 2,000 - 1,200 - 628,000
         self.assertEqual(p["net_profit"], D("-627200"))
@@ -225,6 +224,8 @@ class ApiAndExportTests(PnlBase):
         self.sale()
         self.payroll()
         self.depreciation()
+        from apps.inventory.services import InventoryService
+        InventoryService.adjust_stock(self.org, self.taxed, self.wh, D("-1"), "Damaged", self.user)
         qs = {"period": "custom", "date_from": str(self.span[0]), "date_to": str(self.span[1])}
         res = self.api.get("/api/v1/reports/pnl/", qs)
         self.assertEqual(res.status_code, 200, getattr(res, "data", None))
@@ -242,6 +243,8 @@ class ApiAndExportTests(PnlBase):
         self.assertIn("Payroll", cells)
         self.assertIn("Depreciation", cells)
         self.assertIn("follows your books", cells)
+        self.assertIn("Inventory shrinkage and adjustments", cells)
+        self.assertIn("Total cost of sales", cells)
         pdf = self.api.get("/api/v1/reports/pnl/", {**qs, "format": "pdf"})
         self.assertEqual(pdf.status_code, 200)
         self.assertTrue(pdf.content.startswith(b"%PDF"))
@@ -252,21 +255,27 @@ class StockAdjustmentLineTests(PnlBase):
         from apps.inventory.services import InventoryService
         return InventoryService.adjust_stock(self.org, self.taxed, self.wh, D(qty), "Damaged", self.user)
 
-    def test_shrinkage_is_its_own_line_and_profit_still_equals_the_ledger(self):
-        self.sale()                      # sales 2,000, cost of what was sold 1,200
-        self.adjust("-3")                # 3 x 600 stock loss = 1,800 (account 5100, a cost-of-goods account)
+    def test_shrinkage_is_a_visible_sub_line_of_cost_of_sales_above_gross_profit(self):
+        self.sale()                      # sales 2,000, cost of goods sold 1,200
+        self.adjust("-3")                # 3 x 600 stock loss = 1,800 (account 5100)
         p = self.pnl()
-        self.assertEqual(p["cost_of_goods_sold"], D("1200"))                          # sale cost only
-        self.assertEqual(p["operating_expenses_breakdown"]["stock_adjustments"], D("1800"))
-        self.assertEqual(p["operating_expenses"], D("1800"))
-        self.assertEqual(p["net_profit"], D("-1000"))                                 # 2,000 - 1,200 - 1,800
+        self.assertEqual(p["cost_of_sales_breakdown"], {
+            "cost_of_goods_sold": D("1200"),
+            "inventory_shrinkage_and_adjustments": D("1800"),
+            "total_cost_of_sales": D("3000")})
+        self.assertEqual(p["cost_of_goods_sold"], D("3000"))                          # legacy key = total cost of sales
+        self.assertEqual(p["gross_profit"], D("-1000"))                               # 2,000 - 3,000, shrinkage included
+        self.assertEqual(p["operating_expenses"], D("0"))
+        self.assertNotIn("stock_adjustments", p["operating_expenses_breakdown"])
+        self.assertEqual(p["net_profit"], D("-1000"))
         self.assertEqual(p["net_profit"], ledger_net_profit(self.org, *self.span))
         self.assertEqual(p["ledger_reconciliation"]["difference"], D("0"))
 
-    def test_found_stock_is_a_gain_on_the_same_line(self):
+    def test_found_stock_is_a_negative_on_the_sub_line(self):
         self.adjust("2")                 # 2 x 600 found: a gain of 1,200
         p = self.pnl()
-        self.assertEqual(p["operating_expenses_breakdown"]["stock_adjustments"], D("-1200"))
+        self.assertEqual(p["cost_of_sales_breakdown"]["inventory_shrinkage_and_adjustments"], D("-1200"))
+        self.assertEqual(p["gross_profit"], D("1200"))
         self.assertEqual(p["net_profit"], D("1200"))
         self.assertEqual(p["net_profit"], ledger_net_profit(self.org, *self.span))
 

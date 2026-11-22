@@ -506,7 +506,11 @@ export interface PnL {
   basis?: 'ledger'
   operating_expenses_breakdown?: {
     logged_expenses: string; supplier_bills: string; payroll: string; depreciation: string
-    stock_adjustments: string; other_postings: string
+    other_postings: string
+  }
+  /** cost_of_goods_sold above is the TOTAL cost of sales; these are its two parts. */
+  cost_of_sales_breakdown?: {
+    cost_of_goods_sold: string; inventory_shrinkage_and_adjustments: string; total_cost_of_sales: string
   }
   /** Sales the ledger does not have (an account is not mapped): not in this profit. */
   sales_not_in_books?: { count: number; cost_missing_count: number; message: string }

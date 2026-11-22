@@ -117,7 +117,7 @@ def _ledger_pnl(organisation, date_from, date_to):
         for r in rev_entries:
             reversal_of[r.id] = next((v for k, v in origs.items() if str(k) == r.source_ref), "")
 
-    out = {"sales": Z, "returns": Z, "other_income": Z, "cogs": Z,
+    out = {"sales": Z, "returns": Z, "other_income": Z, "cogs": Z, "shrinkage": Z,
            "expenses": {g: Z for g in PNL_LEDGER_SOURCES}}
     out["expenses"]["other_postings"] = Z
     rows = lines.filter(account__account_type__in=[
@@ -140,9 +140,10 @@ def _ledger_pnl(organisation, date_from, date_to):
                 out["sales"] += c - d
         elif kind == AccountType.COST_OF_GOODS:
             if group_of.get(src) == "stock_adjustments":
-                # stock losses and gains post to Inventory Shrinkage (5100, a cost-of-goods account);
-                # they are shown on their own line, not inside the cost of what was sold
-                out["expenses"]["stock_adjustments"] += d - c
+                # stock losses and gains post to Inventory Shrinkage (5100, a cost-of-goods account).
+                # They are part of cost of sales, but kept as their own visible sub-line so gross
+                # margin can be read before and after shrinkage.
+                out["shrinkage"] += d - c
             else:
                 out["cogs"] += d - c
         else:
@@ -193,8 +194,10 @@ def _ledger_net_profit(organisation, date_from, date_to):
 
 
 PNL_NOTE = (
-    "This profit follows your books (the ledger). It counts sales without VAT and after returns, the cost "
-    "of what you sold, the expenses you logged, salaries from payroll (including the employer share of "
+    "This profit follows your books (the ledger). Costs are shown by function: cost of sales (the cost of "
+    "what you sold plus inventory shrinkage and adjustments, shown on their own line) comes off sales to give "
+    "gross profit, then operating expenses come off to give net profit. It counts sales without VAT and after "
+    "returns, the expenses you logged, salaries from payroll (including the employer share of "
     "pension and other contributions), depreciation of your assets, and supplier bills once approved (not "
     "when paid). Input VAT you can claim back is not a cost. Money held for goods not yet delivered is not "
     "counted as sales until the goods are delivered. Payments and receipts do not change profit. A sale "
@@ -379,8 +382,13 @@ class ReportService:
         returns = led["returns"]
         total_revenue = led["sales"]                     # already net of returns (they post DR Revenue)
         sales_excl_vat = total_revenue + returns
-        total_cogs = led["cogs"]
-        breakdown = dict(led["expenses"])
+        goods_sold = led["cogs"]
+        shrinkage = led["shrinkage"]
+        # cost_of_goods_sold (the legacy key every screen reads) is the TOTAL cost of sales, so
+        # revenue - cost_of_goods_sold = gross profit still holds; the two parts are in
+        # cost_of_sales_breakdown.
+        total_cogs = goods_sold + shrinkage
+        breakdown = {k: v for k, v in led["expenses"].items() if k != "stock_adjustments"}
         total_expenses = sum(breakdown.values(), Decimal("0"))
         misc_income = led["other_income"]
 
@@ -409,6 +417,11 @@ class ReportService:
             "note": PNL_NOTE,
             "basis": "ledger",
             "fulfil_later_revenue_at": FULFIL_LATER_REVENUE_AT,
+            "cost_of_sales_breakdown": {
+                "cost_of_goods_sold": goods_sold,
+                "inventory_shrinkage_and_adjustments": shrinkage,
+                "total_cost_of_sales": total_cogs,
+            },
             "operating_expenses_breakdown": breakdown,
             "sales_not_in_books": {
                 "count": unposted,
