@@ -140,14 +140,14 @@ export default function NotificationBell() {
                               <button
                                 disabled={partnerActionId === req.id}
                                 onClick={() => handleApprovePartner(req.id)}
-                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-green-500/20 text-green-400 hover:bg-green-500/30 disabled:opacity-50 transition-colors"
+                                className="notif-btn notif-btn-good flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md disabled:opacity-50 transition-colors"
                               >
                                 <CheckCircle size={10} /> Approve
                               </button>
                               <button
                                 disabled={partnerActionId === req.id}
                                 onClick={() => handleRejectPartner(req.id)}
-                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 transition-colors"
+                                className="notif-btn notif-btn-bad flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md disabled:opacity-50 transition-colors"
                               >
                                 <XCircle size={10} /> Reject
                               </button>
@@ -371,14 +371,14 @@ export default function NotificationBell() {
                               <button
                                 disabled={receivingId === eta.id}
                                 onClick={() => handleQuickReceive(eta.id)}
-                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 disabled:opacity-50 transition-colors"
+                                className="notif-btn notif-btn-good flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md disabled:opacity-50 transition-colors"
                               >
                                 <CheckCircle2 size={10} />
                                 {receivingId === eta.id ? 'Receiving…' : 'Received'}
                               </button>
                               <button
                                 onClick={() => dismissEta(eta.id)}
-                                className="text-[11px] px-2 py-0.5 rounded-md bg-surface-600/50 text-slate-400 hover:bg-surface-600 transition-colors"
+                                className="notif-btn notif-btn-neutral text-[11px] px-2 py-0.5 rounded-md transition-colors"
                               >
                                 Not yet
                               </button>
