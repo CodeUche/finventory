@@ -8,6 +8,7 @@ Rule since the tax review: VAT is due at the EARLIEST of invoice, receipt or del
 (NTA 2025 s.146(1)); the old "delivery" setting is gone. An invoice stamped "delivery" before
 that is "older": its ledger entries are left alone and the worksheet flags it.
 """
+import unittest
 from datetime import date, datetime, timedelta, timezone as dt_tz
 from decimal import Decimal
 from unittest.mock import patch
@@ -253,3 +254,67 @@ class BackfillCommandTests(VatBase):
         call_command("backfill_vat_timing", "--apply", stdout=__import__("io").StringIO())
         self.assertEqual(Invoice.objects.get(id=with_deposit.id).vat_timing, "invoice")
         self.assertIsNone(Invoice.objects.get(id=no_deposit.id).vat_timing)
+
+
+class TurnoverAndRefundEdgeTests(VatBase):
+    def test_a_deposit_only_proforma_voided_later_leaves_turnover_unchanged_and_vat_goes_negative(self):
+        inv = self.sale(is_proforma=True, amount_paid="0")
+        self.pay(inv, 500)
+        today = timezone.localdate()
+        later = today + timedelta(days=40)
+        with self.at(later):
+            self.assertEqual(self.api.post(f"{URL}{inv.id}/void/").status_code, 200)
+        first = self.vat_result(today, today + timedelta(days=30))
+        second = self.vat_result(later, later)
+        zero_turnover = {k: D("0") for k in first["turnover"]}
+        self.assertEqual(first["turnover"], zero_turnover)      # a proforma never added turnover
+        self.assertEqual(second["turnover"], zero_turnover)     # so its void takes none back
+        self.assertEqual(second["output_vat"], D("-34.88"))
+
+    def test_a_real_sale_voided_later_takes_its_turnover_back_in_the_void_month_only(self):
+        inv = self.sale(defer_fulfillment=True)
+        today = timezone.localdate()
+        later = today + timedelta(days=40)
+        with self.at(later):
+            self.api.post(f"{URL}{inv.id}/void/")
+        self.assertEqual(self.vat_result(today, today + timedelta(days=30))["turnover"]["taxable_standard"], D("2000"))
+        self.assertEqual(self.vat_result(later, later)["turnover"]["taxable_standard"], D("-2000"))
+
+    def test_a_partial_deposit_refund_that_is_not_a_void(self):
+        # No code path posts a "sale_refund" entry. The only ways a deposit comes back are the void
+        # (one mirror entry, tested above) and a negative payment recorded through /pay/.
+        inv = self.sale(is_proforma=True, amount_paid="0")
+        self.pay(inv, 500)
+        res = self.api.post(f"{URL}{inv.id}/pay/", {"amount": "-200", "method": "cash"}, format="json")
+        self.assertIn(res.status_code, (400, 422), getattr(res, "data", None))     # refused, not silently half-booked
+        self.assertEqual(self.entries("sale_refund"), [])
+        self.assertEqual(self.vat_result()["output_vat"], D("34.88"))
+        self.assertEqual(-self.gl("vat"), D("34.88"))
+
+
+class DeliveryChargeReturnTests(VatBase):
+    """BLOCKER for ever switching SALES_DELIVERY_VAT_FOLLOWS_GOODS on (it stays OFF): a return only hands
+    back the VAT of the goods lines (SaleReturnItem.tax_refund), never the VAT on the delivery charge, and
+    the delivery charge itself is in no turnover line. Fixing it means changing how returns refund and post
+    (the return model, its journal and the e-invoice credit note), which is not a small change."""
+
+    def full_return(self):
+        inv = self.ok(items=[self.line()], shipping_amount="500", amount_paid="2687.50")   # 2,000 + 500 + 187.50
+        self.assertEqual(inv.tax_amount, D("187.50"))
+        item = inv.items.get()
+        res = self.api.post(f"{URL}{inv.id}/process_return/", {
+            "items": [{"sale_item_id": str(item.id), "quantity_returned": "2"}]}, format="json")
+        self.assertIn(res.status_code, (200, 201), getattr(res, "data", None))
+
+    @override_settings(SALES_DELIVERY_VAT_FOLLOWS_GOODS=True)
+    def test_after_a_full_return_the_vat_figure_and_the_ledger_agree_even_though_delivery_vat_stays(self):
+        self.full_return()
+        v = self.vat_result()
+        self.assertEqual(-self.gl("vat"), v["output_vat"])
+        self.assertEqual(v["output_vat"], D("37.50"))          # goods VAT 150 came back, delivery VAT 37.50 did not
+
+    @unittest.expectedFailure
+    @override_settings(SALES_DELIVERY_VAT_FOLLOWS_GOODS=True)
+    def test_a_full_return_should_hand_back_the_delivery_vat_too(self):
+        self.full_return()
+        self.assertEqual(self.vat_result()["output_vat"], D("0"))

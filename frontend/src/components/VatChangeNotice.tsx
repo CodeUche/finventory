@@ -45,7 +45,7 @@ export default function VatChangeNotice() {
       <ul className="list-disc pl-5 mt-2 text-slate-300 space-y-0.5">
         <li>invoices past due are now included;</li>
         <li>credit notes are deducted in the month they are issued;</li>
-        <li>input VAT is counted only if your business is VAT registered and the supplier is VAT registered or has a TIN on record;</li>
+        <li>input VAT is counted only if your business is VAT registered and the supplier is VAT registered, or the bill carries the supplier tax ID and invoice reference (otherwise it is not counted until checked);</li>
         <li>exempt purchases are not claimed;</li>
         <li>a negative result is shown as a possible refund instead of zero.</li>
       </ul>

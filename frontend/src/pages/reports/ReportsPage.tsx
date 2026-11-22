@@ -323,7 +323,7 @@ export default function ReportsPage() {
         head:   [['Description', 'Amount']],
         body:   [
           ['Output VAT (collected on sales)',    pdfMoney(vatSummary.output_vat)],
-          ['Input VAT (paid on approved bills)', `(${pdfMoney(vatSummary.input_vat)})`],
+          ['Input VAT counted by Audity',         `(${pdfMoney(vatSummary.input_vat)})`],
           ['Estimated net VAT for this period',   pdfMoney(vatSummary.net_vat_payable)],
         ],
         styles:       { ...ts.styles, fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },

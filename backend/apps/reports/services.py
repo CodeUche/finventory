@@ -139,7 +139,12 @@ def _ledger_pnl(organisation, date_from, date_to):
             else:
                 out["sales"] += c - d
         elif kind == AccountType.COST_OF_GOODS:
-            out["cogs"] += d - c
+            if group_of.get(src) == "stock_adjustments":
+                # stock losses and gains post to Inventory Shrinkage (5100, a cost-of-goods account);
+                # they are shown on their own line, not inside the cost of what was sold
+                out["expenses"]["stock_adjustments"] += d - c
+            else:
+                out["cogs"] += d - c
         else:
             out["expenses"][group_of.get(src, "other_postings")] += d - c
     return out

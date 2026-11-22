@@ -2196,6 +2196,7 @@ class AccountingService:
         Transfers and opening stock are not handled here: transfers move value
         between warehouses (no effect on the ledger) and take-on posts its own entries.
         """
+        from django.utils import timezone as _tz
         from apps.inventory.models import StockItem
         mtype = movement.movement_type
         if mtype not in ('adjustment_in', 'adjustment_out') or movement.product_id is None:
@@ -2228,7 +2229,8 @@ class AccountingService:
         reason = (movement.notes or '').strip()[:200]
         return AccountingService.post_journal_entry(
             organisation, f"{what}: {movement.product.sku} x {qty}" + (f" ({reason})" if reason else ""),
-            movement.created_at.date(), lines, user,
+            _tz.localtime(movement.created_at).date(),   # the Lagos day, not the UTC day
+            lines, user,
             ref=f"ADJ-{str(movement.id)[:8].upper()}",
             source_type='stock_adjustment', source_ref=str(movement.id),
         )

@@ -78,8 +78,9 @@ INPUT_BILL_STATUSES = ["approved", "paid", "partially_paid", "overdue"]
 WORKSHEET_NOTE = (
     "This is a working figure prepared by Audity from your sales and bills. It is not a filed "
     "return and not tax advice. Have a licensed tax practitioner review it before you file or pay. "
-    "Input VAT is counted only where your business is VAT registered and the supplier is VAT "
-    "registered (or has a TIN on record when this is not known), and it is not counted on exempt purchases."
+    "Input VAT is counted only where your business is VAT registered and the supplier is VAT registered, "
+    "or, when that is not known, the bill carries the supplier tax ID AND the supplier invoice reference. "
+    "Otherwise it is shown as Not counted until checked. It is not counted on exempt purchases."
 )
 DUE_NOTE = "The legal due date is the 21st of the next month. Confirm with the Service."
 BILL_TREATMENT_NOTE = (
@@ -389,7 +390,11 @@ def _output_lines(organisation, date_from, date_to):
                 net_amount=ZERO, vat_amount=-back,
                 reason="Invoice voided: its VAT is taken back in the month it was voided",
             ))
-        for r in SaleItem.objects.filter(organisation=organisation, invoice_id__in=list(void_in_period)).values(
+        # Only invoices that were counted as a sale in the first place give turnover back: a proforma
+        # that only took a deposit never added any, so its void must not subtract any.
+        counted_ids = [i.id for i in Invoice.objects.filter(
+            organisation=organisation, id__in=list(void_in_period)) if _was_ever_a_sale(organisation, i)]
+        for r in SaleItem.objects.filter(organisation=organisation, invoice_id__in=counted_ids).values(
                 "tax_amount", "tax_rate", "line_total", "product__is_taxable", "product__tax_class__treatment"):
             tax = _d(r["tax_amount"])
             turnover[_bucket(_d(r["tax_rate"]), tax, r["product__tax_class__treatment"],
@@ -855,7 +860,8 @@ def why_it_changed(vat: dict) -> list:
         why.append("Credit notes are deducted in the month they are issued.")
     if vat["input_vat_irrecoverable"] > 0:
         why.append("Some input VAT is not counted: it needs a VAT registered business, a supplier that is VAT "
-                   "registered or has a TIN on record, and a purchase that is not exempt or marked not claimable.")
+                   "registered (or a bill with the supplier tax ID and invoice reference), and a purchase that "
+                   "is not exempt or marked not claimable.")
     if vat["input_vat_awaiting_supplier_invoice"] > 0:
         why.append("VAT on goods received but not yet invoiced by the supplier is not counted.")
     if vat["net_vat_payable"] < 0:

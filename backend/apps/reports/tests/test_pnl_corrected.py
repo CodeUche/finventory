@@ -245,3 +245,38 @@ class ApiAndExportTests(PnlBase):
         pdf = self.api.get("/api/v1/reports/pnl/", {**qs, "format": "pdf"})
         self.assertEqual(pdf.status_code, 200)
         self.assertTrue(pdf.content.startswith(b"%PDF"))
+
+
+class StockAdjustmentLineTests(PnlBase):
+    def adjust(self, qty):
+        from apps.inventory.services import InventoryService
+        return InventoryService.adjust_stock(self.org, self.taxed, self.wh, D(qty), "Damaged", self.user)
+
+    def test_shrinkage_is_its_own_line_and_profit_still_equals_the_ledger(self):
+        self.sale()                      # sales 2,000, cost of what was sold 1,200
+        self.adjust("-3")                # 3 x 600 stock loss = 1,800 (account 5100, a cost-of-goods account)
+        p = self.pnl()
+        self.assertEqual(p["cost_of_goods_sold"], D("1200"))                          # sale cost only
+        self.assertEqual(p["operating_expenses_breakdown"]["stock_adjustments"], D("1800"))
+        self.assertEqual(p["operating_expenses"], D("1800"))
+        self.assertEqual(p["net_profit"], D("-1000"))                                 # 2,000 - 1,200 - 1,800
+        self.assertEqual(p["net_profit"], ledger_net_profit(self.org, *self.span))
+        self.assertEqual(p["ledger_reconciliation"]["difference"], D("0"))
+
+    def test_found_stock_is_a_gain_on_the_same_line(self):
+        self.adjust("2")                 # 2 x 600 found: a gain of 1,200
+        p = self.pnl()
+        self.assertEqual(p["operating_expenses_breakdown"]["stock_adjustments"], D("-1200"))
+        self.assertEqual(p["net_profit"], D("1200"))
+        self.assertEqual(p["net_profit"], ledger_net_profit(self.org, *self.span))
+
+    def test_a_stock_loss_at_23_30_utc_is_dated_on_the_lagos_day(self):
+        late = datetime(2026, 12, 31, 23, 30, tzinfo=dt_tz.utc)         # 00:30 on 1 Jan in Lagos
+        timezone.activate("Africa/Lagos")
+        try:
+            with patch("django.utils.timezone.now", return_value=late):
+                self.adjust("-1")
+        finally:
+            timezone.deactivate()
+        entry = JournalEntry.objects.get(organisation=self.org, source_type="stock_adjustment")
+        self.assertEqual(entry.entry_date, date(2027, 1, 1))

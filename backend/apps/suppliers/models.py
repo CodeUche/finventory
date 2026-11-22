@@ -15,8 +15,8 @@ class Supplier(TenantAwareModel):
     address = models.TextField(blank=True)
     tax_id = models.CharField(max_length=100, blank=True)
     # Is this supplier registered for VAT? 'unknown' (the default, nothing is
-    # backfilled) falls back to "a TIN on record means claimable", flagged
-    # as unconfirmed in the VAT worksheet.
+    # backfilled) is counted only when the bill carries the supplier tax ID
+    # AND the supplier invoice reference (flagged unconfirmed); otherwise "Not counted until checked".
     VAT_YES = 'yes'; VAT_NO = 'no'; VAT_UNKNOWN = 'unknown'
     VAT_REGISTERED_CHOICES = [(VAT_YES, 'Yes'), (VAT_NO, 'No'), (VAT_UNKNOWN, 'Not known')]
     vat_registered = models.CharField(max_length=7, choices=VAT_REGISTERED_CHOICES, default=VAT_UNKNOWN, db_default='unknown')
