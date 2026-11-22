@@ -246,11 +246,14 @@ export default function BalanceSheetPage() {
       ) : data ? (
         <>
           {/* Balance indicator */}
-          <div className={`flex items-center gap-3 p-4 rounded-xl border ${
-            isBalanced
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : 'bg-red-500/10 border-red-500/30 text-red-400'
-          }`}>
+          <div
+            className="flex items-center gap-3 p-4 rounded-xl border"
+            style={{
+              color: isBalanced ? 'var(--ds-good)' : 'var(--ds-bad)',
+              background: `color-mix(in srgb, ${isBalanced ? 'var(--ds-good)' : 'var(--ds-bad)'} 12%, transparent)`,
+              borderColor: `color-mix(in srgb, ${isBalanced ? 'var(--ds-good)' : 'var(--ds-bad)'} 45%, transparent)`,
+            }}
+          >
             {isBalanced
               ? <><CheckCircle size={18} /> <span className="font-semibold">Balanced — Assets equal Liabilities + Equity</span></>
               : <><AlertTriangle size={18} /> <span className="font-semibold">Not balanced — difference: {formatCurrency(String(Math.abs(totalAssets - totalLiabEquity)))}</span></>
@@ -262,7 +265,7 @@ export default function BalanceSheetPage() {
 
             {/* Asset mix donut */}
             <div className="card p-5">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Asset Mix</p>
+              <p className="rp-title mb-3">Asset mix</p>
               {assetDonut.length > 0 ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
@@ -293,7 +296,7 @@ export default function BalanceSheetPage() {
 
             {/* Liabilities & Equity structure donut */}
             <div className="card p-5">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Capital Structure</p>
+              <p className="rp-title mb-3">Capital structure</p>
               {structureDonut.length > 0 ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
@@ -324,7 +327,7 @@ export default function BalanceSheetPage() {
 
             {/* Financial ratios */}
             <div className="card p-5 space-y-4">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Financial Ratios</p>
+              <p className="rp-title">Financial ratios</p>
               {ratios ? (
                 <>
                   <RatioRow
@@ -378,32 +381,32 @@ export default function BalanceSheetPage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Assets */}
             <BSSection
-              title="ASSETS"
-              headerColor="text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+              title="Assets"
+              tone="good"
               accounts={data.assets}
               groups={ASSET_GROUPS}
               total={data.total_assets}
-              totalLabel="TOTAL ASSETS"
+              totalLabel="Total assets"
               onDrill={(code, name) => setDrill({ code, name })}
             />
             {/* Liabilities */}
             <BSSection
-              title="LIABILITIES"
-              headerColor="text-red-400 border-red-500/30 bg-red-500/10"
+              title="Liabilities"
+              tone="bad"
               accounts={data.liabilities}
               groups={LIABILITY_GROUPS}
               total={data.total_liabilities}
-              totalLabel="TOTAL LIABILITIES"
+              totalLabel="Total liabilities"
               onDrill={(code, name) => setDrill({ code, name })}
             />
             {/* Equity */}
             <BSSection
-              title="EQUITY"
-              headerColor="text-blue-400 border-blue-500/30 bg-blue-500/10"
+              title="Equity"
+              tone="blue"
               accounts={data.equity}
               groups={EQUITY_GROUPS}
               total={data.total_equity}
-              totalLabel="TOTAL EQUITY"
+              totalLabel="Total equity"
               onDrill={(code, name) => setDrill({ code, name })}
             />
           </div>
@@ -412,11 +415,11 @@ export default function BalanceSheetPage() {
           <div className="card p-5">
             <div className="flex items-center justify-between">
               <p className="text-slate-400 font-semibold">Liabilities + Equity</p>
-              <p className="text-white font-bold text-xl font-mono">{formatCurrency(String(totalLiabEquity))}</p>
+              <p className="text-white font-bold text-xl rp-nums">{formatCurrency(String(totalLiabEquity))}</p>
             </div>
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-surface-700">
               <p className="text-slate-400 font-semibold">Total Assets</p>
-              <p className="text-white font-bold text-xl font-mono">{formatCurrency(String(totalAssets))}</p>
+              <p className="text-white font-bold text-xl rp-nums">{formatCurrency(String(totalAssets))}</p>
             </div>
           </div>
         </>
@@ -450,7 +453,7 @@ function RatioRow({
           <div className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
           <span className="text-xs text-slate-400">{label}</span>
         </div>
-        <span className={`text-sm font-bold font-mono ${color}`}>{value}</span>
+        <span className={`text-sm font-bold rp-nums ${color}`}>{value}</span>
       </div>
       <p className="text-xs text-slate-600 pl-3.5">{sub}</p>
       {hint && <p className={`text-xs pl-3.5 ${color} opacity-75`}>{hint}</p>}
@@ -459,10 +462,10 @@ function RatioRow({
 }
 
 function BSSection({
-  title, headerColor, accounts, groups, total, totalLabel, onDrill
+  title, tone, accounts, groups, total, totalLabel, onDrill
 }: {
   title: string
-  headerColor: string
+  tone: 'good' | 'bad' | 'blue'
   accounts: BSAccount[]
   groups: { label: string; from: number; to: number }[]
   total: string | number
@@ -477,8 +480,8 @@ function BSSection({
 
   return (
     <div className="card overflow-hidden">
-      <div className={`px-5 py-3 border-b ${headerColor}`}>
-        <p className="text-xs font-bold uppercase tracking-widest">{title}</p>
+      <div className="rp-strip" data-tone={tone}>
+        <span>{title}</span>
       </div>
       {grouped.map(grp => {
         const visibleAccounts = grp.accounts.filter(a => parseFloat(String(a.balance)) !== 0)
@@ -490,30 +493,30 @@ function BSSection({
             {/* Group header */}
             <button
               onClick={() => toggle(grp.label)}
-              className="w-full flex items-center justify-between px-5 py-2 bg-surface-700/40 hover:bg-surface-700/60 transition-colors text-xs font-semibold text-slate-400 uppercase tracking-wider"
+              className="rp-group"
             >
               <span>{grp.label}</span>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-slate-300 normal-case text-xs">{formatCurrency(String(groupTotal))}</span>
+                <span className="rp-nums font-medium">{formatCurrency(String(groupTotal))}</span>
                 {isCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
               </div>
             </button>
             {!isCollapsed && (
-              <div className="divide-y divide-surface-700">
+              <div className="rp-rows">
                 {visibleAccounts.map(a => {
                   const drillable = !!(onDrill && a.code)
                   return (
                     <div
                       key={a.code || a.name}
-                      className={`flex items-center justify-between px-5 py-3 ${drillable ? 'cursor-pointer hover:bg-surface-700/40' : ''}`}
+                      className={`rp-row ${drillable ? 'is-link' : ''}`}
                       onClick={drillable ? () => onDrill!(a.code, a.name) : undefined}
                       title={drillable ? 'View account activity' : undefined}
                     >
                       <div>
-                        <span className="text-xs text-slate-500 font-mono mr-2">{a.code}</span>
+                        <span className="text-xs text-slate-500 rp-nums mr-2">{a.code}</span>
                         <span className={`text-sm ${drillable ? 'text-brand-300 hover:underline' : 'text-slate-300'}`}>{a.name}</span>
                       </div>
-                      <span className="text-white font-medium text-sm font-mono">{formatCurrency(String(a.balance))}</span>
+                      <span className="text-white font-medium text-sm rp-nums">{formatCurrency(String(a.balance))}</span>
                     </div>
                   )
                 })}
@@ -525,9 +528,9 @@ function BSSection({
       {grouped.every(g => g.accounts.filter(a => parseFloat(String(a.balance)) !== 0).length === 0) && (
         <div className="px-5 py-6 text-center text-slate-500 text-sm">No balances</div>
       )}
-      <div className="px-5 py-3 border-t border-surface-700 bg-surface-800/50 flex justify-between">
-        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{totalLabel}</span>
-        <span className="text-white font-bold font-mono">{formatCurrency(String(total))}</span>
+      <div className="rp-total">
+        <span>{totalLabel}</span>
+        <span className="rp-nums">{formatCurrency(String(total))}</span>
       </div>
     </div>
   )
