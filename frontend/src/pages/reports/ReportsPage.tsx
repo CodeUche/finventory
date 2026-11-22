@@ -386,7 +386,7 @@ export default function ReportsPage() {
     try {
       const [pnlRes, salesRes, prodRes, custRes, expRes, arRes, apRes, cfRes, vatRes, pmRes, invRes] =
         await Promise.allSettled([
-          reportApi.pnl(params),
+          skipUnless(access.profitLoss, () => reportApi.pnl(params)),
           reportApi.sales({ ...params, group_by }),
           reportApi.topProducts({ ...params, limit: 10 }),
           reportApi.topCustomers({ ...params, limit: 10 }),
@@ -934,7 +934,8 @@ export default function ReportsPage() {
           TAB: P&L STATEMENT  (Phase 2B)
           — Horizontal waterfall chart (ComposedChart) + comparison table
       ══════════════════════════════════════════════════════════════════════════ */}
-      {tab === 'pnl' && (
+      {tab === 'pnl' && !access.profitLoss && <NoAccessNote />}
+      {tab === 'pnl' && access.profitLoss && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>

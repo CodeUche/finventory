@@ -897,7 +897,10 @@ def _register_defaults() -> None:
 
     # ── Financial Statements ──
     register(ReportDef("profit-loss", "Profit & Loss", "Financial Statements",
-                       profit_and_loss_report, "Revenue, cost of sales and expenses for the period."))
+                       profit_and_loss_report, "Revenue, cost of sales and expenses for the period.",
+                       # The P&L reads payroll, supplier bills and depreciation from the ledger, so it needs
+                       # the same keys as the Accounting screens (tick, accountant role, plan).
+                       module="accounting"))
     register(ReportDef("cash-flow", "Cash Flow Report", "Financial Statements",
                        cash_flow_report, "Cash in and out over the period."))
     register(ReportDef("balance-sheet", "Balance Sheet", "Financial Statements",

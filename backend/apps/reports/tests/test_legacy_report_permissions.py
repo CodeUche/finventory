@@ -34,6 +34,8 @@ from apps.tenancy.models import Membership, ModulePermission
 # route -> (module, role the normal screen needs, owner/admin only)
 GATED_ROUTES = {
     "account-statement": ("accounting", "accountant", False),
+    # ledger based: carries payroll, bill and depreciation totals, so it is an Accounting report
+    "pnl": ("accounting", "accountant", False),
     "customer-details": ("customers", "staff", False),
     "customer-balance": ("customers", "staff", False),
     "product-details": ("inventory", "staff", True),
@@ -48,11 +50,11 @@ GATED_ROUTES = {
 }
 # Intentionally Reports-tick-only content.
 REPORTS_ROUTES = [
-    "sales", "top-products", "top-customers", "pnl", "cash-flow",
+    "sales", "top-products", "top-customers", "cash-flow",
     "sales-by-customer", "sales-by-product", "payment-methods",
 ]
 REPORTS_VIEW_CLASSES = {
-    "SalesSummaryView", "TopProductsView", "TopCustomersView", "ProfitAndLossView",
+    "SalesSummaryView", "TopProductsView", "TopCustomersView",
     "CashFlowView", "SalesByCustomerView", "SalesByProductView", "PaymentMethodsView",
     "ReportCatalogView", "ReportDispatchView", "ReportBulkExportView",
 }
@@ -161,7 +163,8 @@ class LegacyRouteAccessTests(TestCase):
                 self.assertEqual(
                     _get(client, "customer-details", format=fmt).status_code, 403
                 )
-                self.assertEqual(_get(client, "pnl", format=fmt).status_code, 200)
+                self.assertEqual(_get(client, "cash-flow", format=fmt).status_code, 200)
+                self.assertEqual(_get(client, "pnl", format=fmt).status_code, 403)
 
     def test_customer_master_does_not_leak_in_the_refusal(self):
         from apps.customers.models import Customer
@@ -258,7 +261,7 @@ class PlanGateTests(TestCase):
         for key in self.KEYS.values():
             self.assertEqual(_run(owner, key).status_code, 200)
         # Reports-owned content is not plan-gated by module.
-        self.assertEqual(_run(self.members["payroll"], "profit-loss").status_code, 200)
+        self.assertEqual(_run(self.members["payroll"], "sales-by-customer").status_code, 200)
 
     def test_expired_trial_blocks_them(self):
         from datetime import timedelta
@@ -446,7 +449,7 @@ class BulkEmailToTests(TestCase):
             return Response({"message": "sent", "to": email_to})
 
         with mock.patch.object(ReportBulkExportView, "_email_file", fake):
-            res = self._post(["profit-loss"], "  Someone@Example.com ")
+            res = self._post(["sales-by-customer"], "  Someone@Example.com ")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["to"], "Someone@Example.com")
 

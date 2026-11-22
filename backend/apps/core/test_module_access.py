@@ -252,11 +252,12 @@ class ReportsModuleAccessTests(TestCase):
             )
 
     def test_staff_with_the_reports_tick_can(self):
-        """Reports-tick content: sales-by-customer and P&L. The customer master
-        (customer-details) is Customers data and needs that tick too."""
+        """Reports-tick content: sales-by-customer. The customer master (customer-details) is
+        Customers data and needs that tick too, and the ledger-based P&L (payroll, bills,
+        depreciation totals) needs the Accounting tick."""
         _, client, _ = _member(self.org, "rep_view@example.com", "staff", "reports", "view")
         for url in self.REPORTS:
-            if url.endswith("customer-details/"):
+            if url.endswith("customer-details/") or url.endswith("/pnl/"):
                 self.assertEqual(client.get(url).status_code, 403, url)
             else:
                 self.assertEqual(client.get(url).status_code, 200, url)

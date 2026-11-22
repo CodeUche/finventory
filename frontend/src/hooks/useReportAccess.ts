@@ -39,11 +39,12 @@ export function useReportAccess() {
   const productDetails = inventory.canView && isAdmin
   const inventoryValuation = inventory.canView && isAdmin
   const paymentsByCustomer = sales.canView
+  const profitLoss = accounting.canView && accountantUp && planOk('accounting')
   const accountStatement = accounting.canView && accountantUp && planOk('accounting')
   const customerInvoices = sales.canView
 
   return {
-    arAging, apAging, vatSummary, expenseBreakdown, customerBalance, customerDetails,
+    profitLoss, arAging, apAging, vatSummary, expenseBreakdown, customerBalance, customerDetails,
     productDetails, inventoryValuation, paymentsByCustomer, accountStatement, customerInvoices,
     isAdmin,
   }

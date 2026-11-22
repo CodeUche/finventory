@@ -36,7 +36,9 @@ REPORTS_OWNED = sorted(rd.key for rd in ALL_REPORTS if rd.module == "reports")
 
 # Reports that stay behind the "Reports" tick alone. Kept here as an explicit
 # list so moving one is a visible decision, not a silent drift.
-EXPECTED_REPORTS_OWNED = ["cash-flow", "profit-loss", "sales-by-customer"]
+# The Profit & Loss moved OUT of this list: it is ledger based and carries payroll, supplier-bill and
+# depreciation totals, so it needs the Accounting keys like the balance sheet.
+EXPECTED_REPORTS_OWNED = ["cash-flow", "sales-by-customer"]
 
 # Modules whose normal screens also demand the accountant role.
 ACCOUNTANT_MODULES = {"accounting", "tax"}
@@ -156,7 +158,10 @@ class ReportsOnlyMemberTests(TestCase):
                     _run(client, "employee-list", format=fmt).status_code, 403
                 )
                 self.assertEqual(
-                    _run(client, "profit-loss", format=fmt).status_code, 200
+                    _run(client, "cash-flow", format=fmt).status_code, 200
+                )
+                self.assertEqual(
+                    _run(client, "profit-loss", format=fmt).status_code, 403
                 )
 
 
@@ -231,7 +236,8 @@ class PerModuleTests(TestCase):
         req.user = membership.user
         req.organisation = self.org
         self.assertTrue(user_can_run_report(req, registry.get("employee-list")))
-        self.assertTrue(user_can_run_report(req, registry.get("profit-loss")))
+        self.assertTrue(user_can_run_report(req, registry.get("sales-by-customer")))
+        self.assertFalse(user_can_run_report(req, registry.get("profit-loss")))
         self.assertFalse(user_can_run_report(req, registry.get("trial-balance")))
 
 
@@ -254,7 +260,7 @@ class PayrollPlanGateTests(TestCase):
         )
         self.assertEqual(_run(client, "employee-list").status_code, 403)
         # Reports-owned reports are unaffected by the payroll plan gate.
-        self.assertEqual(_run(client, "profit-loss").status_code, 200)
+        self.assertEqual(_run(client, "sales-by-customer").status_code, 200)
         # Owners keep seeing everything.
         self.assertEqual(
             _run(_auth_client(owner, org), "employee-list").status_code, 200
@@ -339,7 +345,7 @@ class BulkExportTests(TestCase):
         denied = {s["key"] for s in skipped if s["reason"] == "No access"}
         self.assertEqual(denied, set(ALL_KEYS) - set(EXPECTED_REPORTS_OWNED))
         titles = self._sheet_titles(res.content)
-        self.assertEqual(len(titles), 3)
+        self.assertEqual(len(titles), 2)
         for forbidden in ("Employee List", "Payroll Report", "Trial Balance"):
             self.assertNotIn(forbidden, titles)
 
@@ -360,11 +366,11 @@ class BulkExportTests(TestCase):
         with mock.patch.object(ReportBulkExportView, "_email_file", fake_email):
             res = self._post(
                 self.client,
-                ["profit-loss", "employee-list", "payroll-report"],
+                ["sales-by-customer", "employee-list", "payroll-report"],
                 email_to="someone@example.com",
             )
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(self._sheet_titles(captured["bytes"]), ["Profit & Loss"])
+        self.assertEqual(len(self._sheet_titles(captured["bytes"])), 1)
         self.assertEqual(
             sorted(s["key"] for s in captured["skipped"]),
             ["employee-list", "payroll-report"],
@@ -372,7 +378,7 @@ class BulkExportTests(TestCase):
 
     def test_owner_bulk_export_contains_the_sheets(self):
         res = self._post(
-            _auth_client(self.owner, self.org), ["profit-loss", "employee-list"]
+            _auth_client(self.owner, self.org), ["sales-by-customer", "employee-list"]
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(len(self._sheet_titles(res.content)), 2)
@@ -380,7 +386,7 @@ class BulkExportTests(TestCase):
     def test_manager_with_payroll_tick_gets_the_payroll_sheet(self):
         _, client, _ = _tick_member(
             self.org, "bk_mgr2@example.com", "manager", ["reports", "payroll"], "write")
-        res = self._post(client, ["profit-loss", "employee-list"])
+        res = self._post(client, ["sales-by-customer", "employee-list"])
         self.assertEqual(res.status_code, 200)
         self.assertEqual(len(self._sheet_titles(res.content)), 2)
 
@@ -408,3 +414,62 @@ class TenantIsolationTests(TestCase):
             HTTP_X_ORGANISATION_ID=str(org_b.id),
         )
         self.assertEqual(_run(owner_client, "employee-list").status_code, 403)
+
+
+class ProfitAndLossNeedsAccountingTests(TestCase):
+    """The P&L is built from the ledger, so it shows aggregate payroll, supplier-bill and depreciation
+    totals. It needs the same keys as the balance sheet: Accounting tick + accountant role + plan."""
+
+    LEGACY = "/api/v1/reports/pnl/"
+
+    def setUp(self):
+        self.owner = _make_user("pl_owner@example.com")
+        self.org = _make_org(self.owner, "PnL Perm Org")
+
+    def _legacy(self, client, **extra):
+        return client.get(self.LEGACY, {"period": "all", **extra})
+
+    def test_a_reports_only_member_is_refused_on_every_route_and_the_catalog_hides_it(self):
+        for role in ("staff", "manager", "accountant"):
+            with self.subTest(role=role):
+                _, client, _ = _tick_member(self.org, f"pl_ro_{role}@example.com", role, ["reports"])
+                self.assertEqual(_run(client, "profit-loss").status_code, 403)
+                self.assertEqual(self._legacy(client).status_code, 403)
+                for fmt in ("excel", "pdf"):
+                    self.assertEqual(self._legacy(client, format=fmt).status_code, 403)
+                keys = [r["key"] for r in client.get("/api/v1/reports/catalog/").json()["reports"]]
+                self.assertNotIn("profit-loss", keys)
+                self.assertNotIn("financial-report-pack", keys)
+
+    def test_the_bulk_export_skips_it_for_a_reports_only_member(self):
+        # bulk export needs manager + reports write
+        _, client, _ = _tick_member(self.org, "pl_bulk@example.com", "manager", ["reports"], "write")
+        res = client.post("/api/v1/reports/export-bulk/",
+                          {"keys": ["profit-loss", "sales-by-customer"], "period": "all", "combine": True},
+                          format="json")
+        self.assertEqual(res.status_code, 200)
+        denied = {s["key"] for s in json.loads(res["X-Reports-Skipped"])}
+        self.assertEqual(denied, {"profit-loss"})
+
+    def test_an_accounting_tick_member_with_the_accountant_role_can_read_it(self):
+        _, client, _ = _tick_member(self.org, "pl_acc@example.com", "accountant", ["reports", "accounting"])
+        self.assertEqual(_run(client, "profit-loss").status_code, 200)
+        self.assertEqual(self._legacy(client).status_code, 200)
+        self.assertEqual(self._legacy(client, format="excel").status_code, 200)
+        keys = [r["key"] for r in client.get("/api/v1/reports/catalog/").json()["reports"]]
+        self.assertIn("profit-loss", keys)
+
+    def test_the_accounting_tick_without_the_accountant_role_is_still_refused(self):
+        _, client, _ = _tick_member(self.org, "pl_staff_acc@example.com", "staff", ["reports", "accounting"])
+        self.assertEqual(_run(client, "profit-loss").status_code, _run(client, "balance-sheet").status_code)
+        self.assertEqual(_run(client, "profit-loss").status_code, 403)
+
+    def test_the_owner_and_admin_can_read_it(self):
+        _, admin_client, _ = _member(self.org, "pl_admin@example.com", "admin")
+        for client in (_auth_client(self.owner, self.org), admin_client):
+            self.assertEqual(_run(client, "profit-loss").status_code, 200)
+            self.assertEqual(self._legacy(client).status_code, 200)
+
+    def test_every_report_carrying_ledger_cost_totals_is_an_accounting_report(self):
+        for key in ("profit-loss", "financial-report-pack", "balance-sheet", "trial-balance"):
+            self.assertEqual(registry.get(key).module, "accounting", key)

@@ -72,4 +72,15 @@ describe('useReportAccess', () => {
     const a = renderHook(() => useReportAccess()).result.current
     expect(a.apAging && a.accountStatement && a.vatSummary).toBe(true)
   })
+
+  it('the Profit and Loss (ledger based: payroll, bills, depreciation) needs the Accounting tick and the accountant role', () => {
+    setMember('staff', { reports: 'view' })
+    expect(renderHook(() => useReportAccess()).result.current.profitLoss).toBe(false)
+    setMember('staff', { reports: 'view', accounting: 'edit' })
+    expect(renderHook(() => useReportAccess()).result.current.profitLoss).toBe(false)
+    setMember('accountant', { reports: 'view', accounting: 'view' })
+    expect(renderHook(() => useReportAccess()).result.current.profitLoss).toBe(true)
+    setMember('owner', {}, ['sales'])
+    expect(renderHook(() => useReportAccess()).result.current.profitLoss).toBe(true)
+  })
 })

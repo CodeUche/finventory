@@ -144,6 +144,10 @@ class TestAccountantAccess(APITestCase):
         self.client.credentials(HTTP_X_ORGANISATION_ID=str(self.org.id))
 
     def test_accountant_can_access_pnl(self):
+        # The P&L is ledger based, so it needs the Accounting tick as well as the Reports tick.
+        ModulePermission.objects.create(
+            membership=Membership.objects.get(user=self.accountant, organisation=self.org),
+            module="accounting", access_level="view")
         self._auth()
         resp = self.client.get(reverse("report-pnl"))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)

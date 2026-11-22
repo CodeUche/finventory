@@ -236,8 +236,9 @@ class TopCustomersView(BaseDateRangeView):
 
 
 class ProfitAndLossView(BaseDateRangeView):
-    """GET /api/v1/reports/pnl/ — Profit & Loss statement."""
-    module = "reports"
+    """GET /api/v1/reports/pnl/ — Profit & Loss statement (ledger based: it carries payroll, bill and
+    depreciation totals, so it needs the Accounting keys like the balance sheet)."""
+    module = "accounting"
 
     _HEADERS = ["Line Item", "Amount (₦)"]
 
