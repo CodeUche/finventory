@@ -7,6 +7,7 @@ timing stamp, and edits that re-post the ledger.
 from datetime import date
 from decimal import Decimal
 
+from unittest.mock import patch
 from django.test import override_settings
 
 from apps.accounting.models import FinancialPeriod, JournalEntry, JournalLine
@@ -174,8 +175,11 @@ class VatTimingStampTests(Zero):
     def test_the_rule_in_force_is_stamped_on_the_invoice(self):
         inv = self.sale()
         self.assertEqual(inv.vat_timing, "invoice")
+        # NTA 2025 s.146(1): VAT is due at the earliest of invoice, receipt or delivery, so the
+        # old "delivery" setting is no longer a choice: it is ignored and every new invoice is
+        # stamped "invoice". (This used to assert the stamp became "delivery".)
         with override_settings(SALES_VAT_TIMING="delivery"):
-            self.assertEqual(self.sale().vat_timing, "delivery")
+            self.assertEqual(self.sale().vat_timing, "invoice")
 
     def test_flip_invoice_to_delivery_between_raising_and_delivery(self):
         inv = self.sale(defer_fulfillment=True)                  # raised under "invoice": VAT booked now
@@ -187,7 +191,10 @@ class VatTimingStampTests(Zero):
         self.assert_all_balanced()
 
     def test_flip_delivery_to_invoice_between_raising_and_delivery(self):
-        with override_settings(SALES_VAT_TIMING="delivery"):
+        # An OLDER invoice stamped "delivery" (raised before the rule changed) keeps its ledger
+        # behaviour. The stamp can no longer be created by the setting, so make one the way the old
+        # code did. (Was: override_settings(SALES_VAT_TIMING="delivery").)
+        with patch("apps.sales.rules.vat_timing", return_value="delivery"):
             inv = self.sale(defer_fulfillment=True)              # VAT not booked yet
             self.assertEqual(self.gl("vat"), D("0"))
         self.assertEqual(self.api.post(f"{URL}{inv.id}/fulfill/").status_code, 200)
@@ -210,7 +217,7 @@ class VatTimingStampTests(Zero):
         self.assertIsNone(inv.vat_timing)
         self.assertEqual(ledger.vat_now(inv), True)
         with override_settings(SALES_VAT_TIMING="delivery"):
-            self.assertEqual(ledger.vat_now(inv), False)
+            self.assertEqual(ledger.vat_now(inv), True)       # the setting is ignored now (was False)
 
 
 # ── A7: editing amounts re-posts the ledger ─────────────────────────────────

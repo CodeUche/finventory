@@ -1047,7 +1047,7 @@ export default function TaxPage() {
                   { key: 'total_net_sales', label: 'Total Net Sales', money: true },
                   { key: 'vat_output', label: 'VAT Output (collected)', money: true },
                   { key: 'vat_input', label: 'VAT Input (on purchases)', money: true },
-                  { key: 'net_vat_payable', label: 'Net VAT Payable', money: true },
+                  { key: 'net_vat_payable', label: 'Estimated net VAT for this period', money: true },
                 ].map(({ key, label, money }) => {
                   const v = (vatResult as any)[key]
                   if (v === undefined) return null
@@ -1290,7 +1290,7 @@ export default function TaxPage() {
               ))}
               <p className="text-xs text-slate-500">{vatWorksheet.worksheet_note}</p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                <div className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">Input VAT not counted</p><p className="font-mono text-white">{formatCurrency(vatWorksheet.input_vat_irrecoverable)}</p></div>
+                <div className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">Input VAT not counted by Audity</p><p className="font-mono text-white">{formatCurrency(vatWorksheet.input_vat_irrecoverable)}</p></div>
                 <div className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">{vatWorksheet.input_vat_awaiting_supplier_invoice_label}</p><p className="font-mono text-white">{formatCurrency(vatWorksheet.input_vat_awaiting_supplier_invoice)}</p></div>
                 {Object.entries(vatWorksheet.turnover ?? {}).map(([k, v]) => (
                   <div key={k} className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">{vatWorksheet.turnover_labels?.[k] ?? k}</p><p className="font-mono text-white">{formatCurrency(String(v))}</p></div>
@@ -1357,8 +1357,8 @@ export default function TaxPage() {
                   return (
                     <div className="grid grid-cols-3 gap-4 p-4 border-b border-surface-700 bg-surface-800/50">
                       <div><p className="text-xs text-slate-500">Output VAT</p><p className="font-mono text-white font-semibold">{formatCurrency(String(output))}</p></div>
-                      <div><p className="text-xs text-slate-500">Input VAT (ITC)</p><p className="font-mono text-emerald-400 font-semibold">{formatCurrency(String(input))}</p></div>
-                      <div><p className="text-xs text-slate-500">Net VAT Payable</p><p className={`font-mono font-semibold ${output - input >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(String(Math.abs(output - input)))}{output - input < 0 ? ' (possible refund or carry-forward)' : ''}</p></div>
+                      <div><p className="text-xs text-slate-500">Input VAT counted by Audity</p><p className="font-mono text-emerald-400 font-semibold">{formatCurrency(String(input))}</p></div>
+                      <div><p className="text-xs text-slate-500">Estimated net VAT for this period</p><p className={`font-mono font-semibold ${output - input >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(String(Math.abs(output - input)))}{output - input < 0 ? ' (possible refund or carry-forward)' : ''}</p></div>
                     </div>
                   )
                 })()}

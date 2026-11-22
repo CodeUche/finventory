@@ -201,8 +201,10 @@ class FulfilLaterDepositTests(LedgerBase):
         self.assertEqual(self.gl("revenue"), D("-2000"))
         self.assert_subledgers()
 
-    def test_vat_timing_switch_delivery(self):
-        with override_settings(SALES_VAT_TIMING="delivery"):
+    def test_an_older_invoice_stamped_delivery_keeps_its_ledger_behaviour(self):
+        # The "delivery" setting no longer exists (VAT is due at the earliest of invoice,
+        # receipt or delivery); an invoice already stamped "delivery" is left as it was booked.
+        with patch("apps.sales.rules.vat_timing", return_value="delivery"):
             inv = self.sale(defer_fulfillment=True)
             e = self.entries("sale_deferred", inv.id)[0]
             self.assertEqual(self.entry_lines(e), {

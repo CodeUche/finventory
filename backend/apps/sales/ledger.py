@@ -382,7 +382,8 @@ def post_receipt_entry(organisation, invoice, payment, user=None, entry_date=Non
     if invoice.status == Invoice.Status.PROFORMA:
         total = Decimal(str(invoice.total_amount))
         tax = Decimal(str(invoice.tax_amount or 0))
-        vat_part = round_money(amount * tax / total) if (vat_now(invoice) and total > Z) else Z
+        # VAT is due when the money arrives (s.146(1)), whatever the old stamp on the invoice says
+        vat_part = round_money(amount * tax / total) if total > Z else Z
         lines = [(tender, amount, Z), (deposits_account(organisation), Z, amount - vat_part)]
         if vat_part > Z:
             lines.append((AccountMappingService.resolve(organisation, "vat_output_account"), Z, vat_part))

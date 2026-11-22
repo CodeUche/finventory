@@ -19,14 +19,34 @@ class SupplierFlagTests(VatBase):
                                        vat_registered=flag, tax_id=tin)
 
     def test_four_combinations(self):
-        cases = [("yes", "", True, "confirmed"), ("no", "123", False, "confirmed"),
-                 ("unknown", "123", True, "unconfirmed"), ("unknown", "", False, "unconfirmed")]
-        for flag, tin, ok, conf in cases:
-            Supplier_bill = self.bill(date(2025, 10, 5), "1000", supplier=self._sup(flag, tin))
+        # (flag, supplier tax ID, supplier invoice reference on the bill, counted?, confirmation)
+        # Changed by the tax review: "unknown + a TIN on record" used to count. A TIN does not prove VAT
+        # registration, so it now counts only with the bill showing the supplier tax ID AND invoice reference.
+        cases = [("yes", "", "R1", True, "confirmed"), ("no", "123", "R1", False, "confirmed"),
+                 ("unknown", "123", "R1", True, "unconfirmed"),
+                 ("unknown", "123", "", False, "unconfirmed"),       # TIN but no invoice reference: not counted
+                 ("unknown", "", "R1", False, "unconfirmed")]
+        for flag, tin, ref, ok, conf in cases:
+            Supplier_bill = self.bill(date(2025, 10, 5), "1000", supplier=self._sup(flag, tin), reference=ref)
             line = [l for l in self.vat()["lines"] if l["document_id"] == str(Supplier_bill.id)][0]
-            self.assertEqual(line["is_claimable"], ok, (flag, tin))
-            self.assertEqual(line["confirmation"], conf, (flag, tin))
+            self.assertEqual(line["is_claimable"], ok, (flag, tin, ref))
+            self.assertEqual(line["confirmation"], conf, (flag, tin, ref))
+            if not ok and flag == "unknown":
+                self.assertIn("Not counted until checked", line["reason"])
             Supplier_bill.delete()
+
+    def test_an_unknown_supplier_with_a_tin_but_no_reference_is_on_the_needs_attention_list_as_not_counted(self):
+        self.bill(date(2025, 10, 5), "1000", supplier=self.sup_ok, reference="")
+        v = self.vat()
+        self.assertEqual(v["input_vat_recoverable"], D("0"))
+        self.assertEqual(v["input_vat_irrecoverable"], D("1000.00"))
+        row = v["needs_attention"][0]
+        self.assertFalse(row["counted"])
+        self.assertIn("Not counted until checked", row["reason"])
+        # the manual override: mark the supplier "yes" and it counts
+        self.sup_ok.vat_registered = "yes"
+        self.sup_ok.save(update_fields=["vat_registered"])
+        self.assertEqual(self.vat()["input_vat_recoverable"], D("1000.00"))
 
     def test_default_is_unknown_and_not_backfilled(self):
         self.assertEqual(self.sup_ok.vat_registered, "unknown")
@@ -222,7 +242,10 @@ class NotesDuplicatesAndComparisonTests(VatBase):
         self.assertFalse(any("1 January 2026" in n for n in self.vat((date(2026, 1, 1), date(2026, 1, 31)))["notes"]))
         self.assertTrue(any("whole bill" in n for n in v["notes"]))
         self.assertIn("not tax advice", v["worksheet_note"])
-        self.assertIn("21st of the following month", v["due_note"])
+        self.assertEqual(v["due_note"], "The legal due date is the 21st of the next month. Confirm with the Service.")
+        self.assertEqual(v["labels"]["net_vat_payable"], "Estimated net VAT for this period")
+        self.assertEqual(v["labels"]["input_vat_recoverable"], "Input VAT counted by Audity")
+        self.assertEqual(v["labels"]["input_vat_irrecoverable"], "Input VAT not counted by Audity")
         inv, items = self.invoice(date(2025, 10, 10), [("100000", "7.5", self.p_std)])
         self.org.charges_vat = False
         self.org.save(update_fields=["charges_vat"])

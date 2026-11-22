@@ -501,6 +501,16 @@ export interface PnL {
   miscellaneous_income: string
   net_profit: string
   net_margin_pct: string
+  /** Plain-words description of what this profit includes (from the books / ledger). */
+  note?: string
+  basis?: 'ledger'
+  operating_expenses_breakdown?: {
+    logged_expenses: string; supplier_bills: string; payroll: string; depreciation: string
+    stock_adjustments: string; other_postings: string
+  }
+  /** Sales the ledger does not have (an account is not mapped): not in this profit. */
+  sales_not_in_books?: { count: number; cost_missing_count: number; message: string }
+  ledger_reconciliation?: { report_net_profit: string; ledger_net_profit: string; difference: string; note: string }
 }
 
 export interface SalesByCustomerRow {

@@ -257,9 +257,18 @@ class ProfitAndLossView(BaseDateRangeView):
                 ["Gross Profit", d.get("gross_profit", 0)],
                 ["Gross Margin %", d.get("gross_margin_pct", 0)],
                 ["Operating Expenses", d.get("operating_expenses", 0)],
+                *[[f"   {label}", (d.get("operating_expenses_breakdown") or {}).get(k, 0)] for k, label in (
+                    ("logged_expenses", "Expenses you logged"),
+                    ("supplier_bills", "Supplier bills (approved)"),
+                    ("payroll", "Payroll (salaries and employer contributions)"),
+                    ("depreciation", "Depreciation"),
+                    ("stock_adjustments", "Stock adjustments"),
+                    ("other_postings", "Other journal entries"),
+                ) if d.get("operating_expenses_breakdown")],
                 ["Miscellaneous Income", d.get("miscellaneous_income", 0)],
                 ["Net Profit", d.get("net_profit", 0)],
                 ["Net Margin %", d.get("net_margin_pct", 0)],
+                *([["Basis", d["note"]]] if d.get("note") else []),
             ]
 
         return self._export_or_json(
@@ -443,7 +452,7 @@ class VATSummaryView(BaseDateRangeView):
             return [
                 ["Output VAT (Collected on Sales)", d.get("output_vat", 0)],
                 ["Input VAT (Paid on Bills)", d.get("input_vat", 0)],
-                ["Net VAT Payable", d.get("net_vat_payable", 0)],
+                ["Estimated net VAT for this period", d.get("net_vat_payable", 0)],
             ]
 
         return self._export_or_json(

@@ -1159,8 +1159,8 @@ class AccountingService:
             'balanced': not out_of_balance,
             'ledger_out_of_balance': out_of_balance,
             'unreconciled_amount': difference if out_of_balance else Decimal('0'),
-            # Invoices whose revenue posted without their cost of sales: profit is
-            # overstated by their cost until the cogs/inventory mapping is fixed.
+            # Sales held back from the ledger (cost or inventory account not mapped): they are not in
+            # the books at all until the mapping is fixed and they are retried.
             'cogs_missing_invoices': AccountingService.cogs_missing_count(organisation),
             'as_of': str(as_of) if as_of else None,
         }
@@ -1941,15 +1941,16 @@ class AccountingService:
         """Post (or re-post, idempotently) an invoice's sale entry. The posting
         rules live in apps.sales.ledger; this is the retained entry point for the
         GL-retry path. Raises on failure."""
+        from django.utils import timezone as _tz
         from apps.sales import ledger
         if invoice.status == 'voided':
             raise ValueError("This invoice is voided; a voided invoice is never posted to the ledger.")
         if invoice.is_deferred and invoice.fulfilled_at is None:
             mode, entry_date = 'deferred', invoice.issue_date
         elif invoice.is_deferred and ledger.is_new_style_deferred(invoice):
-            mode, entry_date = 'fulfilment', invoice.fulfilled_at.date()
+            mode, entry_date = 'fulfilment', _tz.localtime(invoice.fulfilled_at).date()
         elif invoice.is_deferred:
-            mode, entry_date = 'full', invoice.fulfilled_at.date()
+            mode, entry_date = 'full', _tz.localtime(invoice.fulfilled_at).date()   # the Lagos delivery day
         else:
             mode, entry_date = 'full', invoice.issue_date
         return ledger.post_sale_entry(organisation, invoice, user, mode=mode, entry_date=entry_date)
@@ -1970,8 +1971,9 @@ class AccountingService:
 
     @staticmethod
     def cogs_missing_count(organisation) -> int:
-        """Invoices whose revenue posted but whose cost of sales could not (cogs or
-        inventory account not mapped). Profit is overstated by their cost until fixed."""
+        """Sales held back from the ledger because the cogs or inventory account is not
+        mapped (the whole sale entry is withheld, 0.4.0): they are in neither the Profit & Loss
+        nor the Balance Sheet until the mapping is fixed and the sale is retried."""
         from apps.sales.models import Invoice
         return Invoice.objects.filter(
             organisation=organisation, gl_post_status__in=('not_configured', 'failed'),

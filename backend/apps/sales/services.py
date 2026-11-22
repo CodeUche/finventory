@@ -1203,11 +1203,24 @@ class SaleService:
                 else f"Unpaid balance – {invoice.invoice_number}",
             )
 
-        invoice.save(update_fields=["status", "amount_due", "updated_at"])
-        SaleService._post_sale_entry(
-            invoice, actor,
-            mode="deferred" if invoice.is_deferred else "full", entry_date=issue_date,
-        )
+        # The tax invoice is issued today: that is the date the ledger entry carries, so the
+        # invoice carries it too (VAT, sales and ageing reports read invoice.issue_date).
+        invoice.issue_date = issue_date
+        invoice.save(update_fields=["status", "amount_due", "issue_date", "updated_at"])
+        try:
+            SaleService._post_sale_entry(
+                invoice, actor,
+                mode="deferred" if invoice.is_deferred else "full", entry_date=issue_date,
+            )
+        except ValueError as exc:
+            if "imbalanc" in str(exc).lower():
+                raise ValueError(
+                    "This proforma could not be confirmed because the deposits already taken on it do not "
+                    "match its current totals (for example it was edited after a deposit, or the VAT "
+                    "setting changed). Nothing was changed. Ask your accountant to check the deposit "
+                    "entries, or void this proforma and raise a new one."
+                ) from exc
+            raise
         return invoice
 
     @staticmethod
@@ -1511,6 +1524,13 @@ class SaleService:
             raise ValueError(
                 "This invoice has not been delivered yet, so there is nothing to return. "
                 "Void it instead; any payment taken is refunded."
+            )
+        if invoice.gl_post_status in ("not_configured", "failed"):
+            # The sale never reached the ledger, so a return would post a refund with nothing to
+            # take it off (revenue and VAT debited that were never credited).
+            raise ValueError(
+                "This sale is not in your books yet. Post this sale first: fix the account mapping "
+                "and retry it in GL Health, then process the return."
             )
         return_date = return_date or tz.localdate()
 

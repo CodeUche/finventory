@@ -42,6 +42,161 @@ POSTED_SALE_STATUSES = ["paid", "confirmed", "partially_paid", "credit", "overdu
 
 from django.utils import timezone
 
+# Profit & Loss = the sum of posted ledger lines by entry date (year-end closing entries
+# excluded). A fulfil-later invoice earns its revenue and cost on the DELIVERY date (its
+# "sale" entry); until then the money sits in Customer Deposits 2050 and only the Balance
+# Sheet shows it. (Senior accountant ruling, 2026-11-22.) The invoice-based helper below is
+# used only for the informational "discounts given" line.
+FULFIL_LATER_REVENUE_AT = "delivery"
+
+# Which kind of posting a cost belongs to, for the breakdown. Nothing is created as an
+# Expense row for these; the report reads them from the ledger.
+PNL_LEDGER_SOURCES = {
+    "logged_expenses": ("expense",),
+    "supplier_bills": ("bill_approved", "po_convert_to_bill", "purchase_return"),
+    "payroll": ("payroll", "leave_accrual", "leave_encashment", "salary_advance"),
+    "depreciation": ("depreciation",),
+    "stock_adjustments": ("stock_adjustment",),
+}
+# Income lines in these postings are "other income", not sales.
+PNL_OTHER_INCOME_SOURCES = ("expense", "payroll", "settlement_other_income", "manual")
+PNL_SALE_RETURN_SOURCES = ("sale_return",)
+
+
+def _revenue_recognised_q(prefix, date_from, date_to):
+    """Q for invoices whose revenue falls in the period (used for the informational
+    discounts line only): the issue date, or the delivery date (Lagos date) for a
+    fulfil-later invoice, and nothing until it is delivered."""
+    from django.db.models import Q
+
+    def rng(field):
+        q = Q()
+        if date_from:
+            q &= Q(**{f"{prefix}{field}__gte": date_from})
+        if date_to:
+            q &= Q(**{f"{prefix}{field}__lte": date_to})
+        return q
+
+    if FULFIL_LATER_REVENUE_AT != "delivery":
+        return rng("issue_date")
+    return (
+        (Q(**{f"{prefix}is_deferred": False}) & rng("issue_date"))
+        | (Q(**{f"{prefix}is_deferred": True}) & Q(**{f"{prefix}fulfilled_at__isnull": False})
+           & rng("fulfilled_at__date"))
+    )
+
+
+def _ledger_pnl(organisation, date_from, date_to):
+    """Every P&L figure from posted ledger lines dated in the period.
+
+    Returns a dict of Decimals: sales (net of returns), returns, other_income, cogs,
+    expenses by group (see PNL_LEDGER_SOURCES, plus "other_postings"), output_vat.
+    A reversal entry is counted the way the entry it reverses is.
+    """
+    from apps.accounting.models import AccountType, JournalEntry, JournalLine
+
+    Z = Decimal("0")
+    lines = JournalLine.objects.filter(
+        journal_entry__organisation=organisation, journal_entry__status="posted",
+        journal_entry__is_deleted=False,
+    ).exclude(journal_entry__source_type="year_end_close")
+    if date_from:
+        lines = lines.filter(journal_entry__entry_date__gte=date_from)
+    if date_to:
+        lines = lines.filter(journal_entry__entry_date__lte=date_to)
+
+    group_of = {t: g for g, v in PNL_LEDGER_SOURCES.items() for t in v}
+    # a reversal is read as the entry it reverses
+    reversal_of = {}
+    rev_entries = list(JournalEntry.objects.filter(
+        id__in=lines.filter(journal_entry__source_type="reversal").values("journal_entry_id")))
+    if rev_entries:
+        origs = dict(JournalEntry.objects.filter(
+            organisation=organisation, id__in=[r.source_ref for r in rev_entries if r.source_ref],
+        ).values_list("id", "source_type"))
+        for r in rev_entries:
+            reversal_of[r.id] = next((v for k, v in origs.items() if str(k) == r.source_ref), "")
+
+    out = {"sales": Z, "returns": Z, "other_income": Z, "cogs": Z,
+           "expenses": {g: Z for g in PNL_LEDGER_SOURCES}}
+    out["expenses"]["other_postings"] = Z
+    rows = lines.filter(account__account_type__in=[
+        AccountType.REVENUE, AccountType.EXPENSE, AccountType.COST_OF_GOODS,
+    ]).values("journal_entry_id", "journal_entry__source_type", "account__account_type").annotate(
+        d=Sum("debit"), c=Sum("credit"))
+    for r in rows:
+        d, c = Decimal(str(r["d"] or 0)), Decimal(str(r["c"] or 0))
+        src = r["journal_entry__source_type"]
+        if src == "reversal":
+            src = reversal_of.get(r["journal_entry_id"], "")
+        kind = r["account__account_type"]
+        if kind == AccountType.REVENUE:
+            if src in PNL_OTHER_INCOME_SOURCES:
+                out["other_income"] += c - d
+            elif src in PNL_SALE_RETURN_SOURCES:
+                out["returns"] += d - c
+                out["sales"] += c - d
+            else:
+                out["sales"] += c - d
+        elif kind == AccountType.COST_OF_GOODS:
+            out["cogs"] += d - c
+        else:
+            out["expenses"][group_of.get(src, "other_postings")] += d - c
+    return out
+
+
+def _output_vat_collected(organisation, date_from, date_to):
+    """Credits less debits on the mapped Output VAT account in the period (information)."""
+    from apps.accounting.models import JournalLine
+    from apps.accounting.services import AccountMappingService
+    try:
+        acct = AccountMappingService.resolve(organisation, "vat_output_account")
+    except Exception:
+        return Decimal("0")
+    qs = JournalLine.objects.filter(
+        journal_entry__organisation=organisation, journal_entry__status="posted",
+        journal_entry__is_deleted=False, account=acct)
+    if date_from:
+        qs = qs.filter(journal_entry__entry_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(journal_entry__entry_date__lte=date_to)
+    a = qs.aggregate(d=Sum("debit"), c=Sum("credit"))
+    return Decimal(str(a["c"] or 0)) - Decimal(str(a["d"] or 0))
+
+
+def _ledger_net_profit(organisation, date_from, date_to):
+    """Income accounts minus expense and cost-of-sales accounts, straight from the ledger
+    (year-end closing entries excluded): what Balance Sheet Current Year Earnings moves by.
+    Kept as its own plain query so it checks _ledger_pnl rather than repeating it."""
+    from apps.accounting.models import AccountType, JournalLine
+    qs = JournalLine.objects.filter(
+        journal_entry__organisation=organisation, journal_entry__status="posted",
+        journal_entry__is_deleted=False,
+    ).exclude(journal_entry__source_type="year_end_close")
+    if date_from:
+        qs = qs.filter(journal_entry__entry_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(journal_entry__entry_date__lte=date_to)
+    net = Decimal("0")
+    for r in qs.values("account__account_type").annotate(d=Sum("debit"), c=Sum("credit")):
+        d, c = Decimal(str(r["d"] or 0)), Decimal(str(r["c"] or 0))
+        if r["account__account_type"] == AccountType.REVENUE:
+            net += c - d
+        elif r["account__account_type"] in (AccountType.EXPENSE, AccountType.COST_OF_GOODS):
+            net -= d - c
+    return net
+
+
+PNL_NOTE = (
+    "This profit follows your books (the ledger). It counts sales without VAT and after returns, the cost "
+    "of what you sold, the expenses you logged, salaries from payroll (including the employer share of "
+    "pension and other contributions), depreciation of your assets, and supplier bills once approved (not "
+    "when paid). Input VAT you can claim back is not a cost. Money held for goods not yet delivered is not "
+    "counted as sales until the goods are delivered. Payments and receipts do not change profit. A sale "
+    "that could not be posted to your books (an account is not mapped) is not in this report until you fix "
+    "the mapping and retry it."
+)
+
 
 class ReportService:
 
@@ -213,83 +368,62 @@ class ReportService:
         and needs Revenue − COGS = Gross Profit to hold. The breakdown sits
         beside it: ``sales_excl_vat`` (invoiced, before returns) − ``returns``.
         """
-        from django.db.models import DecimalField, ExpressionWrapper
+        from apps.sales.models import Invoice
 
-        from apps.expenses.models import Expense
-        from apps.sales.models import Invoice, SaleItem, SaleReturnItem
+        led = _ledger_pnl(organisation, date_from, date_to)
+        returns = led["returns"]
+        total_revenue = led["sales"]                     # already net of returns (they post DR Revenue)
+        sales_excl_vat = total_revenue + returns
+        total_cogs = led["cogs"]
+        breakdown = dict(led["expenses"])
+        total_expenses = sum(breakdown.values(), Decimal("0"))
+        misc_income = led["other_income"]
 
-        # Every invoice the ledger has posted a sale for. "returned" counts too:
-        # a fully returned invoice keeps its sale in the month it was made and
-        # its return in the month of the return, as the ledger does. Leaving it
-        # out dropped the sale AND the return, so a September sale returned in
-        # October silently vanished from a re-run September P&L.
-        posted_statuses = ["paid", "confirmed", "partially_paid", "credit", "overdue", "returned"]
-        rev_qs = Invoice.objects.filter(
-            organisation=organisation,
-            status__in=posted_statuses,
-        )
-        rev_qs = _date_filter(rev_qs, "issue_date", date_from, date_to)
-        revenue_data = rev_qs.aggregate(
-            total_revenue=Sum("total_amount"),
-            total_tax_collected=Sum("tax_amount"),
-            total_discounts=Sum("discount_amount"),
-        )
-
-        cogs_qs = SaleItem.objects.filter(
-            organisation=organisation,
-            invoice__status__in=posted_statuses,
-        )
-        cogs_qs = _date_filter(cogs_qs, "invoice__issue_date", date_from, date_to)
-        cogs_data = cogs_qs.aggregate(total_cogs=Sum("cost_of_goods"))
-
-        exp_qs = Expense.objects.filter(organisation=organisation, is_income=False)
-        exp_qs = _date_filter(exp_qs, "expense_date", date_from, date_to)
-        expense_data = exp_qs.aggregate(total_expenses=Sum("amount"))
-
-        inc_qs = Expense.objects.filter(organisation=organisation, is_income=True)
-        inc_qs = _date_filter(inc_qs, "expense_date", date_from, date_to)
-        income_data = inc_qs.aggregate(total_misc_income=Sum("amount"))
-
-        # Returns are recognised on their own date, as the ledger posts them.
-        ret_qs = SaleReturnItem.objects.filter(
-            organisation=organisation,
-            sale_return__invoice__status__in=posted_statuses,
-        )
-        ret_qs = _date_filter(ret_qs, "sale_return__return_date", date_from, date_to)
-        returns_data = ret_qs.aggregate(
-            refunded=Sum("refund_amount"), tax_refunded=Sum("tax_refund"),
-        )
-        # Cost comes back only when the goods do, at the line's own unit cost.
-        returned_cost = ret_qs.filter(
-            sale_return__restocked=True, original_item__quantity__gt=0,
-        ).aggregate(
-            total=Sum(ExpressionWrapper(
-                F("original_item__cost_of_goods") * F("quantity_returned") / F("original_item__quantity"),
-                output_field=DecimalField(max_digits=20, decimal_places=4),
-            ))
-        )["total"] or Decimal("0")
-
-        tax_collected = revenue_data["total_tax_collected"] or Decimal("0")
-        sales_excl_vat = (revenue_data["total_revenue"] or Decimal("0")) - tax_collected
-        returns = (returns_data["refunded"] or Decimal("0")) - (returns_data["tax_refunded"] or Decimal("0"))
-        total_revenue = sales_excl_vat - returns
-        total_cogs = (cogs_data["total_cogs"] or Decimal("0")) - returned_cost.quantize(Decimal("0.01"))
-        total_expenses = expense_data["total_expenses"] or Decimal("0")
-        misc_income = income_data["total_misc_income"] or Decimal("0")
+        disc_qs = Invoice.objects.filter(
+            organisation=organisation, status__in=POSTED_SALE_STATUSES,
+        ).filter(_revenue_recognised_q("", date_from, date_to))
+        discounts = disc_qs.aggregate(t=Sum("discount_amount"))["t"] or Decimal("0")
 
         total_income = total_revenue + misc_income
         gross_profit = total_income - total_cogs
         net_profit = gross_profit - total_expenses
 
+        # Sales the ledger does not have (an account was not mapped): not in this report.
+        from apps.accounting.services import AccountingService
+        unposted = Invoice.objects.filter(
+            organisation=organisation, gl_post_status__in=("not_configured", "failed"),
+        ).exclude(status__in=("voided", "draft", "proforma")).count()
+
+        # Proof against the ledger for the same dates (by construction this is 0).
+        ledger_net = _ledger_net_profit(organisation, date_from, date_to)
+        difference = ledger_net - net_profit
+
         return {
             "period_start": date_from,
             "period_end": date_to,
+            "note": PNL_NOTE,
+            "basis": "ledger",
+            "fulfil_later_revenue_at": FULFIL_LATER_REVENUE_AT,
+            "operating_expenses_breakdown": breakdown,
+            "sales_not_in_books": {
+                "count": unposted,
+                "cost_missing_count": AccountingService.cogs_missing_count(organisation),
+                "message": ("" if not unposted else
+                            f"{unposted} sale(s) are not in your books yet because an account is not mapped, "
+                            "so they are not in this profit. Fix the account mapping, then retry them in GL Health."),
+            },
+            "ledger_reconciliation": {
+                "report_net_profit": net_profit,
+                "ledger_net_profit": ledger_net,
+                "difference": difference,
+                "note": ("" if difference == 0 else "This report and the ledger differ. Check the journals."),
+            },
             "revenue": {
                 "gross_sales": total_revenue,
                 "sales_excl_vat": sales_excl_vat,
                 "returns": returns,
-                "tax_collected": tax_collected,
-                "discounts": revenue_data["total_discounts"] or Decimal("0"),
+                "tax_collected": _output_vat_collected(organisation, date_from, date_to),
+                "discounts": discounts,
             },
             "cost_of_goods_sold": total_cogs,
             "gross_profit": gross_profit,

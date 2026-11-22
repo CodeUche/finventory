@@ -12,7 +12,15 @@ Rules (agreed with the tax expert and the senior accountant, 2026-11-13):
 OUTPUT VAT
   * Posted sales invoices (incl. POS): confirmed, paid, partially_paid, credit,
     overdue and returned. Draft, proforma, voided are out.
-  * Counted by invoice ``issue_date``, never by payment date.
+  * Counted at the EARLIEST of: the invoice being issued, money being received (a deposit on a
+    proforma is VAT on the day it arrives), or delivery (Nigeria Tax Act 2025, s.146(1)). Every
+    invoice raised under the current rule books its VAT when it is raised, so that is its issue
+    date (a proforma that is confirmed takes the confirmation date as its issue date). An older
+    fulfil-later invoice (raised before the two-step posting, or stamped "delivery") is counted at
+    the earliest of its issue date, first receipt and delivery, and flagged as an older invoice.
+  * A voided invoice stays in the month it was raised (a return already filed must not change);
+    the void is a negative line in the month it was done, the same date the ledger uses.
+  * Delivery-charge VAT (Invoice.shipping_tax_amount) is output VAT and is counted with the invoice.
   * Amount = sum of the line-level SaleItem.tax_amount (already rounded per line
     half-up to the kobo when the sale was made). It is reconciled to
     Invoice.tax_amount and any mismatch is FLAGGED in the result, not changed.
@@ -73,8 +81,7 @@ WORKSHEET_NOTE = (
     "Input VAT is counted only where your business is VAT registered and the supplier is VAT "
     "registered (or has a TIN on record when this is not known), and it is not counted on exempt purchases."
 )
-DUE_NOTE = ("Due to the tax authority by the 21st of the following month "
-            "(weekends and holidays may move it).")
+DUE_NOTE = "The legal due date is the 21st of the next month. Confirm with the Service."
 BILL_TREATMENT_NOTE = (
     "VAT treatment applies to the whole bill. If a bill mixes standard-rated and exempt items, "
     "record it as separate bills so the claim is right."
@@ -150,21 +157,44 @@ def _bucket(rate, tax, treatment, is_taxable) -> Optional[str]:
     return "nil_vat_needs_class"
 
 
+OLDER_INVOICE_NOTE = (
+    "Older invoice: it was raised under the old delivery-date rule, so months before delivery may be "
+    "understated. Ask your accountant."
+)
+
+
 def _effective_vat_date(inv):
-    """The date this invoice's output VAT is booked in the ledger, or None when it is not
-    booked yet (a fulfil-later sale on "delivery" timing that has not been delivered).
-    Mirrors apps.sales.ledger (vat_now / is_new_style_deferred) and
-    AccountingService.post_sale_journal so the VAT figure and the ledger move together."""
-    from apps.sales import ledger
+    """(date the output VAT is due, is_older_invoice).
+
+    VAT is due at the EARLIEST of the invoice being issued, money received, or delivery
+    (Nigeria Tax Act 2025, s.146(1)). Every invoice raised under the current rule books its
+    VAT when it is raised, so its date is the issue date. An older fulfil-later invoice (raised
+    before the two-step posting, or stamped "delivery") has ledger entries that booked VAT at
+    delivery; those entries are left alone, but the worksheet counts it at the earliest of its
+    issue date, first receipt and delivery, and flags it.
+    """
+    from apps.sales import ledger, rules
+    from apps.sales.models import SalePayment
 
     if not inv.is_deferred:
-        return inv.issue_date
-    delivered_on = timezone.localtime(inv.fulfilled_at).date() if inv.fulfilled_at else None
-    if ledger.is_new_style_deferred(inv):
-        # raised in two steps: VAT booked when raised, unless the invoice is stamped "delivery"
-        return inv.issue_date if ledger.vat_now(inv) else delivered_on
-    # raised before the two-step posting: everything was booked on delivery
-    return delivered_on
+        return inv.issue_date, False
+    if ledger.is_new_style_deferred(inv) and inv.vat_timing != rules.VAT_TIMING_DELIVERY:
+        return inv.issue_date, False
+    dates = [inv.issue_date]
+    if inv.fulfilled_at:
+        dates.append(timezone.localtime(inv.fulfilled_at).date())
+    first_receipt = SalePayment.objects.filter(invoice=inv, amount__gt=0).order_by("received_at").first()
+    if first_receipt is not None:
+        dates.append(timezone.localtime(first_receipt.received_at).date())
+    return min(dates), True
+
+
+def _vat_account(organisation):
+    from apps.accounting.services import AccountMappingService
+    try:
+        return AccountMappingService.resolve(organisation, "vat_output_account")
+    except Exception:
+        return None
 
 
 def _deposit_lines(organisation, date_from, date_to):
@@ -173,20 +203,17 @@ def _deposit_lines(organisation, date_from, date_to):
     money arrives, and later takes it off the invoice's own VAT, so:
       * returns ({invoice_id: deposit VAT already booked}, lines for deposits in the period);
       * the invoice's own line is reduced by the first figure in _output_lines.
-    Voided invoices are out (the void reverses every entry the invoice owns)."""
+    A voided invoice keeps its deposits in their own month; the void shows as a negative
+    line in the month it was voided (see _void_lines)."""
     from apps.accounting.models import JournalEntry, JournalLine
-    from apps.accounting.services import AccountMappingService
     from apps.sales.models import SalePayment
 
     entries = list(JournalEntry.objects.filter(
         organisation=organisation, source_type="sale_deposit", status=JournalEntry.POSTED,
         is_deleted=False, entry_date__lte=date_to,
     ))
-    if not entries:
-        return {}, []
-    try:
-        vat_acct = AccountMappingService.resolve(organisation, "vat_output_account")
-    except Exception:
+    vat_acct = _vat_account(organisation)
+    if not entries or vat_acct is None:
         return {}, []
     pay_by_id = {str(p.id): p for p in SalePayment.objects.filter(
         organisation=organisation, id__in=[e.source_ref for e in entries],
@@ -200,7 +227,7 @@ def _deposit_lines(organisation, date_from, date_to):
     for e in entries:
         pay = pay_by_id.get(e.source_ref)
         vat = vat_by_entry.get(e.id, ZERO)
-        if pay is None or vat == ZERO or pay.invoice.status == "voided":
+        if pay is None or vat == ZERO:
             continue
         inv = pay.invoice
         per_invoice[inv.id] = per_invoice.get(inv.id, ZERO) + vat
@@ -216,32 +243,70 @@ def _deposit_lines(organisation, date_from, date_to):
     return per_invoice, lines
 
 
+def _void_entries(organisation):
+    """{invoice_id: (void date, VAT the void took back)} for every voided invoice. The void is ONE mirror entry in the ledger (source_type 'invoice_void'), dated the
+    day it was done; the VAT it took back is its debit on the Output VAT account."""
+    from apps.accounting.models import JournalEntry, JournalLine
+
+    vat_acct = _vat_account(organisation)
+    ents = list(JournalEntry.objects.filter(
+        organisation=organisation, source_type="invoice_void", status=JournalEntry.POSTED,
+        is_deleted=False))
+    if not ents or vat_acct is None:
+        return {}
+    back = {r["journal_entry_id"]: _d(r["d"]) - _d(r["c"]) for r in JournalLine.objects.filter(
+        journal_entry__in=ents, account=vat_acct,
+    ).values("journal_entry_id").annotate(d=Sum("debit"), c=Sum("credit"))}
+    out = {}
+    for e in ents:
+        out[e.source_ref] = (e.entry_date, back.get(e.id, ZERO))
+    return out
+
+
+def _was_ever_a_sale(organisation, inv):
+    """True when the ledger holds a sale entry for this invoice (a real sale, not a proforma)."""
+    from apps.accounting.models import JournalEntry
+    from apps.sales import ledger
+    return JournalEntry.objects.filter(
+        organisation=organisation, source_type__in=ledger.SALE_SOURCES,
+        source_ref__startswith=str(inv.id), is_deleted=False).exists()
+
+
 def _output_lines(organisation, date_from, date_to):
     from apps.sales.models import Invoice, SaleItem, SaleReturnItem
 
-    # Which invoices have their VAT due in this period, and on what date. This follows
-    # what the sales ledger books (apps.sales.ledger), so the two cannot disagree:
-    #   * a normal sale: the issue date;
-    #   * a fulfil-later sale stamped "invoice" timing: the issue date (booked when raised);
-    #   * a fulfil-later sale stamped "delivery" timing, or raised before the two-step
-    #     posting existed: the delivery date, and nothing until it is delivered;
-    #   * money received on a proforma (a deposit): see _deposit_lines below.
+    # Which invoices have their VAT due in this period, and on what date (see
+    # _effective_vat_date). A VOIDED invoice stays in the month it was raised (a return already
+    # filed must not change); the void is a negative line in the month it was done, the same
+    # date the ledger mirror entry carries. A voided invoice that never reached the ledger
+    # (no void entry) was never counted at all.
+    voids_all = _void_entries(organisation)
     inv_qs = Invoice.objects.filter(
-        organisation=organisation, status__in=OUTPUT_INVOICE_STATUSES,
+        organisation=organisation, status__in=OUTPUT_INVOICE_STATUSES + ["voided"],
     ).filter(
-        Q(is_deferred=False, issue_date__gte=date_from, issue_date__lte=date_to) | Q(is_deferred=True)
+        Q(is_deferred=False, issue_date__gte=date_from, issue_date__lte=date_to)
+        | Q(is_deferred=True)
     )
-    vat_date = {}
-    for inv in inv_qs.only("id", "is_deferred", "issue_date", "fulfilled_at", "vat_timing", "organisation_id"):
-        d = _effective_vat_date(inv)
-        if d is not None and date_from <= d <= date_to:
+    vat_date, older = {}, set()
+    for inv in inv_qs.only("id", "is_deferred", "issue_date", "fulfilled_at", "vat_timing", "status",
+                           "organisation_id"):
+        if inv.status == "voided" and not (
+                str(inv.id) in voids_all and _was_ever_a_sale(organisation, inv)):
+            # never booked (a proforma that only took a deposit, or a sale the ledger never got):
+            # its deposits and the void show as their own lines, the invoice itself was never VAT
+            continue
+        d, is_older = _effective_vat_date(inv)
+        if date_from <= d <= date_to:
             vat_date[inv.id] = d
+            if is_older:
+                older.add(inv.id)
     inv_qs = Invoice.objects.filter(organisation=organisation, id__in=list(vat_date))
     deposit_vat_by_invoice, deposit_lines = _deposit_lines(organisation, date_from, date_to)
     item_rows = SaleItem.objects.filter(
         organisation=organisation, invoice__in=inv_qs,
     ).values(
         "invoice_id", "invoice__invoice_number", "invoice__issue_date", "invoice__tax_amount",
+        "invoice__shipping_tax_amount",
         "invoice__status", "invoice__customer__name", "invoice__customer__tin",
         "tax_amount", "tax_rate", "line_total",
         "product__is_taxable", "product__tax_class__treatment",
@@ -254,14 +319,17 @@ def _output_lines(organisation, date_from, date_to):
         tax = _d(r["tax_amount"])
         net = _d(r["line_total"]) - tax
         rate = _d(r["tax_rate"])
-        turnover[_bucket(rate, tax, r["product__tax_class__treatment"], r["product__is_taxable"])] += net
+        bucket = _bucket(rate, tax, r["product__tax_class__treatment"], r["product__is_taxable"])
+        turnover[bucket] += net
         if r["invoice__status"] == "overdue":
             overdue_vat += tax
         e = per_invoice.setdefault(r["invoice_id"], {
             "number": r["invoice__invoice_number"], "date": vat_date[r["invoice_id"]],
             "header_tax": _d(r["invoice__tax_amount"]),
+            # delivery-charge VAT is in the invoice total but on no item line
+            "vat": _d(r["invoice__shipping_tax_amount"]),
             "customer": r["invoice__customer__name"] or "", "tin": r["invoice__customer__tin"] or "",
-            "net": ZERO, "vat": ZERO, "rates": set(),
+            "net": ZERO, "rates": set(),
         })
         e["net"] += net
         e["vat"] += tax
@@ -277,12 +345,15 @@ def _output_lines(organisation, date_from, date_to):
                 "difference": e["vat"] - e["header_tax"],
             })
         rate = next(iter(e["rates"])) if len(e["rates"]) == 1 else None
+        reason = ("Line VAT differs from invoice total" if not header_ok
+                  else ("Part of the VAT was already counted when the deposit was received" if already else ""))
+        if inv_id in older:
+            reason = (reason + " " if reason else "") + OLDER_INVOICE_NOTE
         lines.append(_line(
             kind="sale", direction="output", document_id=str(inv_id), source_ref=e["number"],
             date=e["date"], counterparty_name=e["customer"], counterparty_tin=e["tin"],
             net_amount=e["net"], vat_amount=e["vat"] - already, vat_rate=rate,
-            reason=("Line VAT differs from invoice total" if not header_ok
-                    else ("Part of the VAT was already counted when the deposit was received" if already else "")),
+            reason=reason, older_invoice=inv_id in older,
         ))
 
     # Invoices that carry VAT but have no lines at all: use the header figure, flagged.
@@ -302,6 +373,27 @@ def _output_lines(organisation, date_from, date_to):
         ))
 
     lines.extend(deposit_lines)
+
+    # Voids done in this period: a negative line in the month of the void.
+    void_in_period = {iid: v for iid, v in voids_all.items() if date_from <= v[0] <= date_to}
+    if void_in_period:
+        for inv in Invoice.objects.filter(
+                organisation=organisation, id__in=list(void_in_period)).select_related("customer"):
+            when, back = void_in_period[str(inv.id)]
+            if back == ZERO:
+                continue
+            lines.append(_line(
+                kind="sale_void", direction="output", document_id=str(inv.id), source_ref=inv.invoice_number,
+                date=when, counterparty_name=inv.customer.name if inv.customer else "",
+                counterparty_tin=(inv.customer.tin if inv.customer else "") or "",
+                net_amount=ZERO, vat_amount=-back,
+                reason="Invoice voided: its VAT is taken back in the month it was voided",
+            ))
+        for r in SaleItem.objects.filter(organisation=organisation, invoice_id__in=list(void_in_period)).values(
+                "tax_amount", "tax_rate", "line_total", "product__is_taxable", "product__tax_class__treatment"):
+            tax = _d(r["tax_amount"])
+            turnover[_bucket(_d(r["tax_rate"]), tax, r["product__tax_class__treatment"],
+                             r["product__is_taxable"])] -= _d(r["line_total"]) - tax
 
     ret_rows = SaleReturnItem.objects.filter(
         organisation=organisation,
@@ -339,7 +431,7 @@ def _output_lines(organisation, date_from, date_to):
 
 # ─── Input side ──────────────────────────────────────────────────────────────
 
-def _verdict(registered, supplier, treatment, not_claimable_reason):
+def _verdict(registered, supplier, treatment, not_claimable_reason, reference=""):
     """(claimable, reason, confirmation) for one bill or return. Decided per bill."""
     if not registered:
         return False, "Your business is not marked as registered for VAT", "n/a"
@@ -353,9 +445,16 @@ def _verdict(registered, supplier, treatment, not_claimable_reason):
         return False, "Supplier is not VAT registered", "confirmed"
     if status == "yes":
         return True, "", "confirmed"
-    if tin:
-        return True, "Supplier VAT status not confirmed; counted because a TIN is on record", "unconfirmed"
-    return False, "Supplier VAT status not known and no TIN on record", "unconfirmed"
+    # Status not known. A TIN does not prove VAT registration; s.152 asks for a VAT invoice that
+    # carries the supplier tax ID. So count it only when the bill shows VAT charged (it does, or it
+    # would not be here), carries the supplier tax ID AND the supplier invoice reference. Otherwise
+    # it is NOT counted until someone checks (it is on the needs-attention list). Marking the supplier
+    # "yes" or "no" is the manual override.
+    ref = (reference or "").strip()
+    if tin and ref:
+        return True, "Supplier VAT status not confirmed; counted because the bill shows VAT with the supplier tax ID and invoice reference", "unconfirmed"
+    missing = " and ".join(x for x, ok in (("the supplier tax ID", bool(tin)), ("the supplier invoice reference", bool(ref))) if not ok)
+    return False, "Not counted until checked: supplier VAT status not known and the bill lacks " + missing, "unconfirmed"
 
 
 def _original_bill(organisation, purchase_return):
@@ -381,7 +480,7 @@ def _input_lines(organisation, date_from, date_to):
     lines, attention = [], []
     for b in bills:
         sup = b.supplier
-        ok, why, conf = _verdict(registered, sup, b.vat_treatment, b.vat_not_claimable_reason)
+        ok, why, conf = _verdict(registered, sup, b.vat_treatment, b.vat_not_claimable_reason, b.reference)
         line = _line(
             kind="bill", direction="input", document_id=str(b.id), source_ref=b.bill_number,
             date=b.issue_date, counterparty_name=sup.name if sup else "",
@@ -394,15 +493,20 @@ def _input_lines(organisation, date_from, date_to):
         if registered and sup:
             unknown = sup.vat_registered == "unknown"
             no_tin = not (sup.tax_id or "").strip()
-            if (unknown or no_tin) and sup.vat_registered != "no":
+            no_ref = not (b.reference or "").strip()
+            if (unknown or no_tin) and sup.vat_registered != "no" and (not ok or unknown):
                 attention.append({
                     "bill_id": str(b.id), "bill_number": b.bill_number, "date": str(b.issue_date),
                     "supplier_id": str(sup.id), "supplier_name": sup.name,
                     "supplier_tin": sup.tax_id or "", "supplier_vat_registered": sup.vat_registered,
                     "vat_amount": _d(b.tax_amount),
-                    "reason": ("Supplier VAT status not known" if unknown else "") +
-                              (" and " if unknown and no_tin else "") +
-                              ("no TIN on record" if no_tin else ""),
+                    "counted": bool(ok),
+                    "reason": (("Not counted until checked: " if not ok else "") +
+                               ("Supplier VAT status not known" if unknown else "") +
+                               (" and " if unknown and no_tin else "") +
+                               ("no TIN on record" if no_tin else "") +
+                               (("; " if (unknown or no_tin) else "") + "no supplier invoice reference on the bill"
+                                if (no_ref and unknown) else "")),
                 })
     for b in awaiting:
         sup = b.supplier
@@ -423,7 +527,7 @@ def _input_lines(organisation, date_from, date_to):
         if orig is not None:
             sup = orig.supplier
             if orig.status in INPUT_BILL_STATUSES:
-                ok, why, conf = _verdict(registered, sup, orig.vat_treatment, orig.vat_not_claimable_reason)
+                ok, why, conf = _verdict(registered, sup, orig.vat_treatment, orig.vat_not_claimable_reason, orig.reference)
             else:
                 ok, why, conf = False, "Original bill VAT was not claimed (bill status: %s)" % orig.status, "n/a"
             note = "Follows original bill %s" % orig.bill_number
@@ -642,7 +746,7 @@ def compute_vat(
     in_lines, attention = _input_lines(organisation, date_from, date_to)
     manual, ignored = _manual_adjustments(organisation, date_from, date_to)
 
-    sales_vat = sum((l["vat_amount"] for l in out_lines if l["kind"] == "sale"), ZERO)
+    sales_vat = sum((l["vat_amount"] for l in out_lines if l["kind"] in ("sale", "sale_void")), ZERO)
     returns_vat = -sum((l["vat_amount"] for l in out_lines if l["kind"] == "sale_return"), ZERO)
     manual_out = sum((l["vat_amount"] for l in manual if l["direction"] == "output"), ZERO)
     output_vat = sales_vat - returns_vat + manual_out
@@ -672,6 +776,8 @@ def compute_vat(
         notes.append(UNREGISTERED_NOTE)
         if any(l["kind"] == "sale" and l["vat_amount"] > 0 for l in out_lines):
             warnings.append(CHARGED_BUT_OFF_NOTE)
+    if any(l.get("older_invoice") for l in out_lines):
+        warnings.append(OLDER_INVOICE_NOTE)
     if net < 0:
         notes.append(NEGATIVE_NOTE)
     if share != Decimal("100"):
@@ -707,6 +813,14 @@ def compute_vat(
         "input_vat_awaiting_supplier_invoice_label": AWAITING_INVOICE_LABEL,
         "net_vat_payable": net,
         "position": "payable" if net > 0 else ("refund_or_carry_forward" if net < 0 else "nil"),
+        "position_label": ("Estimated VAT to pay for this period" if net > 0 else
+                           ("Estimated refund or carry-forward for this period" if net < 0
+                            else "Estimated nil for this period")),
+        "labels": {
+            "net_vat_payable": "Estimated net VAT for this period",
+            "input_vat_recoverable": "Input VAT counted by Audity",
+            "input_vat_irrecoverable": "Input VAT not counted by Audity",
+        },
         "turnover": turnover,
         "turnover_labels": TURNOVER_LABELS,
         "invoice_vat_mismatches": mismatches,

@@ -6,12 +6,14 @@ Django settings (SALES_* names below) without a code change.
 
 Plain-words list:
 
-VAT_TIMING
-    "invoice"  (default) VAT is owed when the invoice is issued or money is
-               received, whichever is first -- NOT when the goods are
-               delivered. A fulfil-later invoice therefore books its VAT the
-               day it is raised.
-    "delivery" VAT is booked only when the goods are handed over.
+VAT_TIMING (fixed, no longer a choice)
+    VAT is owed at the EARLIEST of: the invoice being issued, money being received,
+    or the goods being delivered (Nigeria Tax Act 2025, s.146(1)). Delivery is never
+    the only trigger once an invoice exists or money has come in, so every sale books
+    its VAT when it is raised or when a deposit is received. The old "delivery" option
+    is gone; SALES_VAT_TIMING is ignored. Invoices that were already stamped "delivery"
+    before this change keep their ledger entries as they are (the stamp column is kept
+    for history) and the VAT worksheet flags them as older invoices.
 
 DELIVERY_VAT_FOLLOWS_GOODS (default False -- recommended value is True)
     The delivery charge carries the same VAT rate as the goods it travels
@@ -40,8 +42,8 @@ VAT_TIMING_DELIVERY = "delivery"
 
 
 def vat_timing() -> str:
-    value = getattr(settings, "SALES_VAT_TIMING", VAT_TIMING_INVOICE)
-    return value if value in (VAT_TIMING_INVOICE, VAT_TIMING_DELIVERY) else VAT_TIMING_INVOICE
+    # One live rule. (VAT_TIMING_DELIVERY stays defined only to read old invoice stamps.)
+    return VAT_TIMING_INVOICE
 
 
 def vat_due_at_invoice() -> bool:

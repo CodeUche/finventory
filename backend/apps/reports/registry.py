@@ -253,7 +253,7 @@ def notes_shell(organisation, date_from: date, date_to: date, **_):
             {"number": 6, "title": "Trade and other payables", "body": "See Aged Payables."},
             {"number": 7, "title": "Inventories", "body": "See Stock Valuation."},
             {"number": 8, "title": "Revenue", "body": ""},
-            {"number": 9, "title": "Taxation", "body": "See VAT Return / Tax Summary."},
+            {"number": 9, "title": "Taxation", "body": "See VAT worksheet / Tax Summary."},
             {"number": 10, "title": "Events after the reporting period", "body": ""},
         ],
     }
@@ -906,7 +906,7 @@ def _register_defaults() -> None:
     register(ReportDef("trial-balance", "Trial Balance", "Financial Statements",
                        trial_balance_report, "Every account's debit/credit balance as at the period end.",
                        module="accounting"))
-    register(ReportDef("vat-return", "Net Tax Report (VAT Return)", "Financial Statements",
+    register(ReportDef("vat-return", "Net Tax Report (VAT worksheet)", "Financial Statements",
                        vat_return, "Output VAT less input VAT for the period.",
                        module="tax"))
     register(ReportDef("tax-summary", "Tax Summary Report", "Financial Statements",

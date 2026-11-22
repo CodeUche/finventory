@@ -88,6 +88,10 @@ class VatBase(TestCase):
 
     def bill(self, issue_date, vat, supplier=None, status="approved", treatment="standard", net="100000", org=None, **kw):
         org = org or self.org
+        # A normal supplier bill carries the supplier invoice reference. Input VAT with an unknown
+        # supplier VAT status is counted only when the bill has the supplier tax ID AND this reference
+        # (the conservative rule from the tax review); tests that need it missing pass reference="".
+        kw.setdefault("reference", f"SUP-INV-{next(_seq)}")
         return Bill.objects.create(
             organisation=org, supplier=supplier or self.sup_ok, status=status, issue_date=issue_date,
             due_date=issue_date, subtotal=D(net), tax_amount=D(vat), total_amount=D(net) + D(vat),
@@ -202,7 +206,8 @@ class ZeroRatedAndInputTests(VatBase):
         self.assertEqual(v["input_vat_irrecoverable"], D("3750.00"))
         self.assertEqual(v["net_vat_payable"], D("0"))
         line = [l for l in v["lines"] if l["kind"] == "bill"][0]
-        self.assertIn("no TIN", line["reason"])
+        self.assertIn("Not counted until checked", line["reason"])      # was "no TIN"
+        self.assertIn("supplier tax ID", line["reason"])
 
     def test_bill_status_rules(self):
         self.bill(date(2025, 10, 1), "100", status="draft")
@@ -228,6 +233,10 @@ class ZeroRatedAndInputTests(VatBase):
 
     def test_purchase_return_reduces_input_vat_in_period_issued(self):
         from apps.purchases.models import PurchaseReturn
+        # A return with no linked bill follows the supplier own status; a supplier whose VAT status is
+        # unknown is not counted (tax review), so this supplier is marked as confirmed VAT registered.
+        self.sup_ok.vat_registered = "yes"
+        self.sup_ok.save(update_fields=["vat_registered"])
         self.bill(date(2025, 10, 3), "7500")
         PurchaseReturn.objects.create(
             organisation=self.org, purchase_order=self._po(), supplier=self.sup_ok, warehouse=self.wh,

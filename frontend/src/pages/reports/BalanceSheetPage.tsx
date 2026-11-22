@@ -14,6 +14,8 @@ import {
   Scale, Loader2, RefreshCw, CheckCircle, AlertTriangle,
   ChevronDown, ChevronUp,
 } from 'lucide-react'
+import { balanceSheetFigures, unitsToNumber } from '@/lib/balanceSheetMath'
+import { sumUnits, toUnits } from '@/lib/money'
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
@@ -138,56 +140,25 @@ export default function BalanceSheetPage() {
     }
   }
 
-  const totalAssets     = parseFloat(String(data?.total_assets     ?? 0))
-  const totalLiab       = parseFloat(String(data?.total_liabilities ?? 0))
-  const totalEquity     = parseFloat(String(data?.total_equity     ?? 0))
-  const totalLiabEquity = totalLiab + totalEquity
+  // All money maths is exact (lib/balanceSheetMath): no floating point on balances.
+  const fig = useMemo(() => balanceSheetFigures({
+    assets: data?.assets ?? [], liabilities: data?.liabilities ?? [],
+    total_assets: data?.total_assets, total_liabilities: data?.total_liabilities,
+    total_equity: data?.total_equity, unreconciled_amount: data?.unreconciled_amount,
+    ledger_out_of_balance: data?.ledger_out_of_balance,
+  }), [data])
+  const totalAssets     = fig.totalAssets
+  const totalLiabEquity = fig.totalLiabEquity
   // The server adds an openly-labelled "Unreconciled difference" line so the sheet
   // still adds up when the books are wrong; it flags that with ledger_out_of_balance.
   const ledgerOutOfBalance = data?.ledger_out_of_balance === true
-  const unreconciledAmount = Math.abs(parseFloat(String(data?.unreconciled_amount ?? 0)))
-  const isBalanced      = data ? !ledgerOutOfBalance && Math.abs(totalAssets - totalLiabEquity) < 0.01 : false
+  const unreconciledAmount = fig.unreconciledAmount
+  const isBalanced      = data ? fig.isBalanced : false
 
-  /**
-   * Phase 4: Derived ratios and donut data — computed once whenever `data` changes.
-   */
-  const { assetDonut, structureDonut, ratios } = useMemo(() => {
-    if (!data) return { assetDonut: [], structureDonut: [], ratios: null }
-
-    // Bucket assets by code range for the donut
-    const sumGroup = (accts: BSAccount[], from: number, to: number) =>
-      accts
-        .filter(a => { const c = parseInt(a.code, 10); return c >= from && c <= to })
-        .reduce((s, a) => s + parseFloat(String(a.balance)), 0)
-
-    const currentAssets = sumGroup(data.assets, 1000, 1499)
-    const fixedAssets   = sumGroup(data.assets, 1500, 1599)
-    const otherAssets   = sumGroup(data.assets, 1600, 1999)
-
-    // Current liabilities (codes 2000–2499) for Current Ratio
-    const currentLiab = sumGroup(data.liabilities, 2000, 2499)
-
-    const assetDonut = [
-      { name: 'Current Assets', value: Math.abs(currentAssets) },
-      { name: 'Fixed Assets',   value: Math.abs(fixedAssets)   },
-      { name: 'Other Assets',   value: Math.abs(otherAssets)   },
-    ].filter(d => d.value > 0)
-
-    const structureDonut = [
-      { name: 'Liabilities', value: Math.abs(totalLiab)   },
-      { name: 'Equity',      value: Math.abs(totalEquity) },
-    ].filter(d => d.value > 0)
-
-    const workingCapital  = currentAssets - currentLiab
-    const currentRatio    = currentLiab > 0 ? currentAssets / currentLiab : null
-    const debtEquityRatio = totalEquity  > 0 ? totalLiab / totalEquity     : null
-
-    return {
-      assetDonut,
-      structureDonut,
-      ratios: { workingCapital, currentRatio, debtEquityRatio },
-    }
-  }, [data, totalLiab, totalEquity])
+  const { assetDonut, structureDonut } = fig
+  const ratios = data
+    ? { workingCapital: fig.workingCapital, currentRatio: fig.currentRatio, debtEquityRatio: fig.debtEquityRatio }
+    : null
 
   const yearOptions = Array.from({ length: 6 }, (_, i) => now.getFullYear() - i)
 
@@ -514,9 +485,9 @@ function BSSection({
         <p className="text-xs font-bold uppercase tracking-widest">{title}</p>
       </div>
       {grouped.map(grp => {
-        const visibleAccounts = grp.accounts.filter(a => parseFloat(String(a.balance)) !== 0)
+        const visibleAccounts = grp.accounts.filter(a => toUnits(String(a.balance)) !== BigInt(0))
         if (visibleAccounts.length === 0) return null
-        const groupTotal = visibleAccounts.reduce((s, a) => s + parseFloat(String(a.balance)), 0)
+        const groupTotal = unitsToNumber(sumUnits(visibleAccounts.map(a => String(a.balance))))
         const isCollapsed = collapsed[grp.label]
         return (
           <div key={grp.label}>
@@ -555,7 +526,7 @@ function BSSection({
           </div>
         )
       })}
-      {grouped.every(g => g.accounts.filter(a => parseFloat(String(a.balance)) !== 0).length === 0) && (
+      {grouped.every(g => g.accounts.filter(a => toUnits(String(a.balance)) !== BigInt(0)).length === 0) && (
         <div className="px-5 py-6 text-center text-slate-500 text-sm">No balances</div>
       )}
       <div className="px-5 py-3 border-t border-surface-700 bg-surface-800/50 flex justify-between">

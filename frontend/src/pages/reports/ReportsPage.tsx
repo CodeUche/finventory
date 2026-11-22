@@ -22,7 +22,7 @@
 
 import { useChartKit } from '@/lib/chartKit'
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   AreaChart, Area,
@@ -298,7 +298,7 @@ export default function ReportsPage() {
         nameColor,
         companyFontUnderline:  organisation?.company_name_font_underline,
         showCompanyName:       showName,
-        docTitle:              'VAT RETURN REPORT',
+        docTitle:              'VAT WORKSHEET',
         metaRows: [
           ['Organisation', organisation?.name ?? ''],
           ['Period',        dateRange],
@@ -324,7 +324,7 @@ export default function ReportsPage() {
         body:   [
           ['Output VAT (collected on sales)',    pdfMoney(vatSummary.output_vat)],
           ['Input VAT (paid on approved bills)', `(${pdfMoney(vatSummary.input_vat)})`],
-          ['Net VAT Payable to FIRS',            pdfMoney(vatSummary.net_vat_payable)],
+          ['Estimated net VAT for this period',   pdfMoney(vatSummary.net_vat_payable)],
         ],
         styles:       { ...ts.styles, fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
         columnStyles: {
@@ -343,7 +343,7 @@ export default function ReportsPage() {
       const afterY = (doc as any).lastAutoTable.finalY + 6
       doc.setFontSize(TYPE.BODY.size); doc.setFont(pFont, 'italic'); doc.setTextColor(...MUTED)
       doc.text(
-        `Formula: Output VAT − Input VAT = Net VAT Payable  (${netPayable >= 0 ? 'Owed to FIRS' : 'VAT Credit / Refund'})`,
+        `Formula: Output VAT − Input VAT counted = Estimated net VAT for this period  (${netPayable >= 0 ? 'estimated to pay' : 'possible refund or carry-forward'})`,
         14, afterY,
       )
 
@@ -354,7 +354,7 @@ export default function ReportsPage() {
       doc.text('DISCLAIMER', 17, disclaimerY + 5)
       doc.setFont(pFont, 'italic')
       const disclaimerText =
-        'This VAT Return Report is generated for informational purposes only. ' +
+        'This VAT worksheet is generated for informational purposes only and is not a filed return. ' +
         'Figures are based on transactions recorded in Audity during the selected period. ' +
         'You are solely responsible for verifying accuracy and filing returns with FIRS via TaxPro-Max. ' +
         'Consult a qualified tax professional before submitting your official VAT return.'
@@ -362,7 +362,7 @@ export default function ReportsPage() {
 
       addDocFooter(doc, {
         orgName:  organisation?.name ?? 'Company',
-        docTitle: 'VAT RETURN REPORT',
+        docTitle: 'VAT WORKSHEET',
         docRef:   dateRange,
         BRAND,
         pdfFont:  pFont,
@@ -592,6 +592,14 @@ export default function ReportsPage() {
     ['Gross Profit',       formatCurrency(pnl.gross_profit)],
     ['Gross Margin %',     `${parseFloat(pnl.gross_margin_pct).toFixed(2)}%`],
     ['Operating Expenses', formatCurrency(pnl.operating_expenses)],
+    ...(pnl.operating_expenses_breakdown ? [
+      ['   Expenses you logged',        formatCurrency(pnl.operating_expenses_breakdown.logged_expenses)],
+      ['   Supplier bills (approved)',  formatCurrency(pnl.operating_expenses_breakdown.supplier_bills)],
+      ['   Payroll (salaries and employer contributions)', formatCurrency(pnl.operating_expenses_breakdown.payroll)],
+      ['   Depreciation',               formatCurrency(pnl.operating_expenses_breakdown.depreciation)],
+      ['   Stock adjustments',          formatCurrency(pnl.operating_expenses_breakdown.stock_adjustments)],
+      ['   Other journal entries',      formatCurrency(pnl.operating_expenses_breakdown.other_postings)],
+    ] : []),
     ['Misc. Income',       formatCurrency(pnl.miscellaneous_income ?? '0')],
     ['Net Profit',         formatCurrency(pnl.net_profit)],
     ['Net Margin %',       `${parseFloat(pnl.net_margin_pct).toFixed(2)}%`],
@@ -807,8 +815,8 @@ export default function ReportsPage() {
                     <VATCard label="Output VAT"     sub="Collected on sales" value={vatSummary.output_vat} />
                     <VATCard label="Input VAT"      sub="Paid on bills"      value={vatSummary.input_vat} />
                     <VATCard
-                      label="Net VAT Payable"
-                      sub={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'Working figure, payable' : 'Possible refund or carry-forward'}
+                      label="Estimated net VAT for this period"
+                      sub={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'Working figure, estimated to pay' : 'Possible refund or carry-forward'}
                       value={vatSummary.net_vat_payable}
                       highlight={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'red' : 'green'}
                     />
@@ -816,7 +824,7 @@ export default function ReportsPage() {
                   <div className="p-3 rounded-xl bg-surface-800/50 border border-surface-700">
                     <p className="text-xs text-slate-400">
                       <strong className="text-white">Formula:</strong> Output VAT ({formatCurrency(vatSummary.output_vat)}) −
-                      Input VAT ({formatCurrency(vatSummary.input_vat)}) = Net VAT Payable
+                      Input VAT ({formatCurrency(vatSummary.input_vat)}) = Estimated net VAT for this period
                     </p>
                   </div>
                   <VatChangeNotice />
@@ -938,6 +946,16 @@ export default function ReportsPage() {
             </div>
             <ExportBar endpoint="/reports/pnl/" params={exportParams} filenameBase="profit_and_loss" />
           </div>
+
+          {pnl?.sales_not_in_books && pnl.sales_not_in_books.count > 0 && (
+            <div role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+              {pnl.sales_not_in_books.message}{' '}
+              <Link to="/accounting/gl-health" className="underline">Open GL Health to retry</Link>
+            </div>
+          )}
+          {pnl?.note && (
+            <p className="text-xs text-slate-400" data-testid="pnl-note">{pnl.note}</p>
+          )}
 
           {/* KPI strip */}
           {pnl && (
