@@ -779,3 +779,58 @@ html.light .ds{
 .ds .notif-btn-good:hover:not(:disabled){background:color-mix(in srgb,var(--ds-pill-green-tx) 16%,var(--ds-pill-green-bg))}
 .ds .notif-btn-bad:hover:not(:disabled){background:color-mix(in srgb,var(--ds-pill-red-tx) 16%,var(--ds-pill-red-bg))}
 .ds .notif-btn-neutral:hover:not(:disabled){background:color-mix(in srgb,var(--ds-pill-gry-tx) 16%,var(--ds-pill-gry-bg))}
+
+/* ============================================================================
+   REPORTS MODULE (General Reports, Reports & Analytics, Balance Sheet, Stock Reports,
+   Sales by Customer / Product). DERIVED - not designer-approved: the designer drew no
+   report screens, so these reuse the kit's tile, card and table-header styling from the
+   Income & Expense, HR Analytics and Dashboard screens. Tokens only, no one-off colours.
+   ========================================================================== */
+/* Sentence-case label (the old small UPPERCASE letter-spaced labels become this). */
+.ds .rp-label{font-size:14px;font-weight:500;color:var(--ds-muted);text-transform:none;letter-spacing:0}
+/* Section / card title. */
+.ds .rp-title{font-size:16px;font-weight:600;color:var(--ds-title);text-transform:none;letter-spacing:0}
+/* Money and counts: Roboto with equal-width digits so columns line up (never monospace). */
+.ds .rp-nums{font-family:'Roboto',system-ui,sans-serif;font-variant-numeric:tabular-nums}
+/* Summary tile: lavender-blue fill, sentence-case label, bold coloured amount, soft shadow. */
+.ds .rp-tile{
+  display:flex;flex-direction:column;gap:2px;min-width:0;padding:14px 18px;border-radius:12px;
+  background:var(--ds-tile);border:1.5px solid var(--ds-tile-bd);box-shadow:0 2px 8px color-mix(in srgb,var(--ds-link) 18%,transparent);
+}
+.ds .rp-tile .rp-tile-label{font-size:14px;font-weight:500;color:var(--ds-tile-tx);text-transform:none;letter-spacing:0}
+.ds .rp-tile .rp-tile-value{font-size:20px;font-weight:700;line-height:1.25;color:var(--ds-title);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.ds .rp-tile .rp-tile-sub{font-size:13px;color:var(--ds-tile-tx)}
+.ds .rp-tile[data-tone="good"] .rp-tile-value{color:var(--ds-good)}
+.ds .rp-tile[data-tone="bad"] .rp-tile-value{color:var(--ds-bad)}
+.ds .rp-tile[data-tone="link"] .rp-tile-value{color:var(--ds-link)}
+.ds .rp-tile[data-tone="warn"] .rp-tile-value{color:var(--ds-warn)}
+/* Tinted section strip (Assets / Liabilities / Equity, group headings): kit pill colours instead of ad-hoc rgba. */
+.ds .rp-strip{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 20px;font-size:15px;font-weight:700;text-transform:none;letter-spacing:0;border-bottom:1px solid var(--ds-row-bd)}
+.ds .rp-strip[data-tone="good"]{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx)}
+.ds .rp-strip[data-tone="bad"]{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx)}
+.ds .rp-strip[data-tone="blue"]{background:var(--ds-pill-blue-bg);color:var(--ds-pill-blue-tx)}
+.ds .rp-strip[data-tone="neutral"]{background:var(--ds-th-bg);color:var(--ds-th-tx)}
+/* Sub-group header inside a statement card (light band, sentence case). */
+.ds .rp-group{display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 20px;font-size:14px;font-weight:600;text-transform:none;letter-spacing:0;background:color-mix(in srgb,var(--ds-th-bg) 45%,transparent);color:var(--ds-ink);border:0;cursor:pointer}
+.ds .rp-group:hover{background:var(--ds-row-hover)}
+.ds .rp-rows > * + *{border-top:1px solid var(--ds-row-bd)}
+.ds .rp-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 20px;color:var(--ds-ink)}
+.ds .rp-row.is-link{cursor:pointer}
+.ds .rp-row.is-link:hover{background:var(--ds-row-hover)}
+.ds .rp-total{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 20px;border-top:1.5px solid var(--ds-row-bd);background:var(--ds-th-bg);color:var(--ds-th-tx);font-weight:700}
+/* Report picker (hub list): one kit row per report. */
+.ds .rp-item{width:100%;text-align:left;padding:7px 12px;border-radius:10px;border:1.5px solid transparent;font-size:15px;color:var(--ds-ink);background:transparent;transition:background .12s;cursor:pointer}
+.ds .rp-item:hover{background:var(--ds-row-hover)}
+.ds .rp-item[aria-current="true"]{background:var(--ds-tile);border-color:var(--ds-tile-bd);color:var(--ds-th-tx);font-weight:600}
+.ds .rp-cat{display:flex;align-items:center;gap:8px;width:100%;padding:8px 8px;border-radius:8px;font-size:15px;font-weight:600;color:var(--ds-title);text-transform:none;letter-spacing:0;background:transparent;border:0;cursor:pointer}
+.ds .rp-cat:hover{background:var(--ds-row-hover)}
+.ds .rp-cat .rp-count{font-size:12px;font-weight:500;color:var(--ds-muted)}
+/* Tables inside report result panels: rounded kit frame. */
+.ds .rp-frame{border:1.5px solid var(--ds-card-bd);border-radius:12px;overflow:hidden}
+/* Tinted call-out box (cash in / cash out, VAT owed, concentration warning, inventory value): one kit tint per meaning. */
+.ds .rp-callout{--rp-c:var(--ds-link);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;border-radius:12px;
+  color:var(--ds-ink);background:color-mix(in srgb,var(--rp-c) 12%,transparent);border:1.5px solid color-mix(in srgb,var(--rp-c) 40%,transparent)}
+.ds .rp-callout[data-tone="good"]{--rp-c:var(--ds-good)}
+.ds .rp-callout[data-tone="bad"]{--rp-c:var(--ds-bad)}
+.ds .rp-callout[data-tone="warn"]{--rp-c:var(--ds-warn)}
+.ds .rp-callout .rp-callout-value{font-weight:700;color:var(--rp-c);font-variant-numeric:tabular-nums}

@@ -147,10 +147,10 @@ function fmtPeriod(raw: string, groupBy: string): string {
 
 function kpi(label: string, value: string, sub?: string, positive = true) {
   return (
-    <div className="card p-5">
-      <p className="text-xs text-slate-400 mb-1">{label}</p>
-      <p className={`text-2xl font-bold ${positive ? 'text-white' : 'text-red-400'}`}>{value}</p>
-      {sub && <p className="text-xs text-slate-500 mt-1">{sub}</p>}
+    <div className="rp-tile" data-tone={!positive ? 'bad' : /sales|profit|revenue|income/i.test(label) ? 'good' : undefined}>
+      <p className="rp-tile-label">{label}</p>
+      <p className="rp-tile-value !text-2xl">{value}</p>
+      {sub && <p className="rp-tile-sub">{sub}</p>}
     </div>
   )
 }
@@ -635,18 +635,15 @@ export default function ReportsPage() {
       </div>
 
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
-      <div className="flex overflow-x-auto gap-1 border-b border-surface-700 pb-0">
+      <div className="ds-tabs !mb-0 overflow-x-auto">
         {TABS.map(t => {
           const Icon = t.icon
           return (
             <button
               key={t.id}
               onClick={() => handleSetTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px
-                ${tab === t.id
-                  ? 'report-tab-active border-brand-400 text-brand-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
+              className={`ds-tab flex items-center gap-1.5 whitespace-nowrap ${tab === t.id ? 'is-active' : ''}`}
+              aria-pressed={tab === t.id}
             >
               <Icon size={14} />
               {t.label}
@@ -824,8 +821,8 @@ export default function ReportsPage() {
                       highlight={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'red' : 'green'}
                     />
                   </div>
-                  <div className="p-3 rounded-xl bg-surface-800/50 border border-surface-700">
-                    <p className="text-xs text-slate-400">
+                  <div className="rp-callout" data-tone="link">
+                    <p className="text-sm text-slate-300">
                       <strong className="text-white">Formula:</strong> Output VAT ({formatCurrency(vatSummary.output_vat)}) −
                       Input VAT ({formatCurrency(vatSummary.input_vat)}) = Estimated net VAT for this period
                     </p>
@@ -853,11 +850,7 @@ export default function ReportsPage() {
                     label="Cash Inflows" value={formatCurrency(cashFlow.cash_inflows)} color="green" />
                   <CashFlowRow icon={<ArrowUpCircle size={16} className="text-red-400" />}
                     label="Cash Outflows" value={`(${formatCurrency(cashFlow.cash_outflows)})`} color="red" />
-                  <div className={`flex items-center justify-between p-4 rounded-xl border ${
-                    parseFloat(cashFlow.net_cash_flow) >= 0
-                      ? 'bg-emerald-500/10 border-emerald-500/30'
-                      : 'bg-red-500/10 border-red-500/30'
-                  }`}>
+                  <div className="rp-callout" data-tone={parseFloat(cashFlow.net_cash_flow) >= 0 ? 'good' : 'bad'}>
                     <span className="text-sm font-semibold text-white">Net Cash Flow</span>
                     <span className={`text-lg font-bold ${parseFloat(cashFlow.net_cash_flow) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                       {parseFloat(cashFlow.net_cash_flow) >= 0 ? '' : '-'}
@@ -888,7 +881,7 @@ export default function ReportsPage() {
                 <div className="h-20 bg-surface-800 rounded-xl animate-pulse" />
               ) : inventory ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                  <div className="rp-callout" data-tone="link">
                     <span className="text-sm text-slate-300">Total Inventory Value</span>
                     <span className="text-xl font-bold text-purple-300">
                       {formatCurrency(String(inventory.total_inventory_value))}
@@ -1025,7 +1018,7 @@ export default function ReportsPage() {
           {/* Revenue vs Costs progress bars (existing, kept for detail) */}
           {pnl && (
             <div className="card p-5">
-              <h3 className="text-sm font-semibold text-slate-300 mb-4">Revenue vs Costs — % of Net Sales</h3>
+              <h3 className="rp-title mb-4">Revenue vs Costs — % of Net Sales</h3>
               <div className="space-y-3">
                 {[
                   { label: 'Net Sales',          value: parseFloat(pnl.revenue.gross_sales),    color: 'bg-[#4479EE]' },
@@ -1033,7 +1026,7 @@ export default function ReportsPage() {
                   { label: 'Discounts',           value: parseFloat(pnl.revenue.discounts),      color: 'bg-[#ABAEED]' },
                   { label: 'COGS',                value: parseFloat(pnl.cost_of_goods_sold),     color: 'bg-[#8086E5]' },
                   { label: 'Operating Expenses',  value: parseFloat(pnl.operating_expenses),     color: 'bg-[#7766FF]' },
-                  { label: 'Net Profit',          value: parseFloat(pnl.net_profit), color: parseFloat(pnl.net_profit) >= 0 ? 'bg-emerald-500' : 'bg-red-600' },
+                  { label: 'Net Profit',          value: parseFloat(pnl.net_profit), color: parseFloat(pnl.net_profit) >= 0 ? 'bg-[#0E9900]' : 'bg-[#FF3336]' },
                 ].map(({ label, value, color }) => {
                   const gross = parseFloat(pnl.revenue.gross_sales) || 1
                   const pct   = Math.min(100, Math.abs(Math.round((value / gross) * 100)))
@@ -1242,7 +1235,7 @@ export default function ReportsPage() {
 
               {/* Phase 2C: Customer concentration risk alert */}
               {!loading && concentrationPct > 50 && (
-                <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                <div className="rp-callout mt-3" data-tone="warn">
                   <p className="text-xs text-amber-400 font-medium">
                     ⚠ Concentration risk — top 3 customers = {concentrationPct}% of revenue.
                     Consider diversifying your customer base.
@@ -1360,11 +1353,11 @@ export default function ReportsPage() {
             {/* DSO / DPO derived metrics shown as badges */}
             {arAging && pnl && (
               <div className="flex items-center gap-2">
-                <span className="text-xs px-2 py-1 rounded-lg bg-brand-500/10 border border-brand-500/20 text-brand-400">
+                <span className="badge badge-blue">
                   AR Outstanding: {formatCurrency(arAging.total_outstanding)}
                 </span>
                 {apAging && (
-                  <span className="text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
+                  <span className="badge badge-red">
                     AP Outstanding: {formatCurrency(apAging.total_outstanding)}
                   </span>
                 )}
@@ -1891,12 +1884,10 @@ function VATCard({
   label, sub, value, highlight,
 }: { label: string; sub: string; value: string; highlight?: 'red' | 'green' }) {
   return (
-    <div className={`p-3 rounded-xl ${highlight === 'red' ? 'bg-red-500/10' : highlight === 'green' ? 'bg-green-500/10' : 'bg-surface-800'}`}>
-      <p className="text-xs text-slate-500 mb-1">{label}</p>
-      <p className={`text-base font-bold ${highlight === 'red' ? 'text-red-400' : highlight === 'green' ? 'text-green-400' : 'text-white'}`}>
-        {formatCurrency(value)}
-      </p>
-      <p className="text-xs text-slate-500 mt-0.5">{sub}</p>
+    <div className="rp-tile" data-tone={highlight === 'red' ? 'bad' : highlight === 'green' ? 'good' : undefined}>
+      <p className="rp-tile-label">{label}</p>
+      <p className="rp-tile-value">{formatCurrency(value)}</p>
+      <p className="rp-tile-sub">{sub}</p>
     </div>
   )
 }
@@ -1905,9 +1896,7 @@ function CashFlowRow({ icon, label, value, color }: {
   icon: React.ReactNode; label: string; value: string; color: 'green' | 'red'
 }) {
   return (
-    <div className={`flex items-center justify-between p-3 rounded-xl border ${
-      color === 'green' ? 'bg-green-500/8 border-green-500/20' : 'bg-red-500/8 border-red-500/20'
-    }`}>
+    <div className="rp-callout" data-tone={color}>
       <div className="flex items-center gap-2">
         {icon}
         <span className="text-sm text-slate-300">{label}</span>
@@ -1921,13 +1910,13 @@ function MetricCard({
   label, value, sub, color, icon,
 }: { label: string; value: string; sub: string; color: 'emerald' | 'red'; icon: React.ReactNode }) {
   return (
-    <div className={`card p-5 border ${color === 'emerald' ? 'border-emerald-500/20' : 'border-red-500/20'}`}>
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-xs text-slate-400">{label}</p>
+    <div className="rp-tile" data-tone={color === 'emerald' ? 'good' : 'bad'}>
+      <div className="flex items-start justify-between">
+        <p className="rp-tile-label">{label}</p>
         {icon}
       </div>
-      <p className={`text-xl font-bold ${color === 'emerald' ? 'text-emerald-400' : 'text-red-400'}`}>{value}</p>
-      <p className="text-xs text-slate-500 mt-1">{sub}</p>
+      <p className="rp-tile-value">{value}</p>
+      <p className="rp-tile-sub">{sub}</p>
     </div>
   )
 }

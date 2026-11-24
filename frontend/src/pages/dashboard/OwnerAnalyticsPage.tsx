@@ -17,10 +17,10 @@ const PERIODS = [
 
 function MetricCard({ label, value, sub, color = 'white' }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div className="card p-5">
-      <p className="text-xs text-slate-400 mb-1">{label}</p>
-      <p className={`text-2xl font-bold ${color === 'green' ? 'text-emerald-400' : color === 'orange' ? 'text-white' : color === 'brand' ? 'text-brand-400' : 'text-white'}`}>{value}</p>
-      {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
+    <div className="rp-tile" data-tone={color === 'green' ? 'good' : color === 'brand' ? 'link' : undefined}>
+      <p className="rp-tile-label">{label}</p>
+      <p className="rp-tile-value !text-2xl">{value}</p>
+      {sub && <p className="rp-tile-sub">{sub}</p>}
     </div>
   )
 }
@@ -101,20 +101,20 @@ export default function OwnerAnalyticsPage() {
               <DollarSign size={16} className="text-brand-400" /> Cost Comparison
             </h2>
             <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl bg-surface-700/40 border border-surface-700">
-                <p className="text-xs text-slate-400 mb-1">Company COGS</p>
-                <p className="text-xl font-bold text-white">{formatCurrency(data.company_cogs)}</p>
-                <p className="text-xs text-slate-500 mt-0.5">Cost price × units sold</p>
+              <div className="rp-tile" data-tone="bad">
+                <p className="rp-tile-label">Company COGS</p>
+                <p className="rp-tile-value">{formatCurrency(data.company_cogs)}</p>
+                <p className="rp-tile-sub">Cost price × units sold</p>
               </div>
-              <div className="p-4 rounded-xl bg-brand-500/5 border border-brand-500/20">
-                <p className="text-xs text-brand-400 mb-1 flex items-center gap-1"><ShieldCheck size={11} /> Owner COGS</p>
-                <p className="text-xl font-bold text-brand-400">{formatCurrency(data.owner_cogs)}</p>
-                <p className="text-xs text-slate-500 mt-0.5">Owner cost price × units sold</p>
+              <div className="rp-tile" data-tone="link">
+                <p className="rp-tile-label flex items-center gap-1"><ShieldCheck size={12} /> Owner COGS</p>
+                <p className="rp-tile-value">{formatCurrency(data.owner_cogs)}</p>
+                <p className="rp-tile-sub">Owner cost price × units sold</p>
               </div>
             </div>
             {parseFloat(data.owner_cogs) > 0 && (
-              <div className="mt-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                <p className="text-xs text-emerald-400">
+              <div className="rp-callout mt-3" data-tone="good">
+                <p className="text-sm text-emerald-400">
                   Owner's additional margin vs company cost:{' '}
                   <span className="font-bold">{formatCurrency(String(parseFloat(data.company_cogs) - parseFloat(data.owner_cogs)))}</span>
                 </p>
@@ -133,7 +133,7 @@ export default function OwnerAnalyticsPage() {
                   <thead>
                     <tr className="border-b border-surface-700">
                       {['Product', 'Revenue', 'Company GP', 'Owner GP'].map((h) => (
-                        <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                        <th key={h} className="px-4 py-2.5 text-left">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -144,13 +144,13 @@ export default function OwnerAnalyticsPage() {
                       return (
                         <tr key={i} className="table-row">
                           <td className="px-4 py-3 text-white font-medium">{p.product_name}</td>
-                          <td className="px-4 py-3 font-mono text-slate-300">{formatCurrency(p.revenue)}</td>
-                          <td className="px-4 py-3 font-mono">
+                          <td className="px-4 py-3 rp-nums text-slate-300">{formatCurrency(p.revenue)}</td>
+                          <td className="px-4 py-3 rp-nums">
                             <span className={companyGP >= 0 ? 'text-emerald-400' : 'text-red-400'}>
                               {formatCurrency(p.company_gross)}
                             </span>
                           </td>
-                          <td className="px-4 py-3 font-mono">
+                          <td className="px-4 py-3 rp-nums">
                             <div className="flex items-center gap-1.5">
                               {ownerGP >= 0
                                 ? <TrendingUp size={13} className="text-brand-400 shrink-0" />

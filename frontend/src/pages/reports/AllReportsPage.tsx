@@ -245,25 +245,22 @@ export default function AllReportsPage() {
                   <div key={cat.name}>
                     <button
                       onClick={() => setOpenCats((p) => ({ ...p, [cat.name]: !open }))}
-                      className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-white hover:bg-surface-800 transition-colors"
+                      className="rp-cat"
                     >
                       {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                       <Icon size={14} />
                       <span className="flex-1 text-left">{cat.name}</span>
-                      <span className="text-[10px] text-slate-600">{cat.reports.length}</span>
+                      <span className="rp-count">{cat.reports.length}</span>
                     </button>
                     {open && (
-                      <div className="ml-4 pl-2 border-l border-surface-700 space-y-0.5 py-0.5">
+                      <div className="ml-4 pl-2 border-l-[1.5px] border-[color:var(--ds-row-bd)] space-y-0.5 py-0.5">
                         {cat.reports.map((r) => (
                           <button
                             key={r.key}
                             onClick={() => selectReport(r.key)}
                             title={r.description}
-                            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-sm transition-colors ${
-                              selected === r.key
-                                ? 'bg-brand-500/15 text-white font-medium border border-brand-500/40'
-                                : 'text-slate-300 hover:bg-surface-800 hover:text-white border border-transparent'
-                            }`}
+                            aria-current={selected === r.key ? 'true' : undefined}
+                            className="rp-item"
                           >
                             {r.label}
                           </button>
@@ -294,9 +291,9 @@ export default function AllReportsPage() {
             </div>
           ) : (
             <>
-              <div className="px-5 py-4 border-b border-surface-700 flex flex-wrap items-center gap-3">
+              <div className="px-5 py-4 border-b-[1.5px] border-[color:var(--ds-row-bd)] flex flex-wrap items-center gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-base font-semibold text-white">{meta?.label ?? selectedEntry?.label}</h2>
+                  <h2 className="text-lg font-bold text-white">{meta?.label ?? selectedEntry?.label}</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {selectedEntry?.description}
                     {meta?.period_label ? ` · ${meta.period_label}` : ''}
@@ -341,9 +338,9 @@ export default function AllReportsPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-surface-700">
+                        <tr>
                           {columns.map((c) => (
-                            <th key={c} className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">
+                            <th key={c} className="px-4 py-3 text-left whitespace-nowrap">
                               {prettify(c)}
                             </th>
                           ))}
@@ -356,7 +353,7 @@ export default function AllReportsPage() {
                               <td
                                 key={c}
                                 className={`px-4 py-2.5 whitespace-nowrap ${
-                                  isMoneyColumn(c) ? 'font-mono text-slate-200 text-right' : 'text-slate-300'
+                                  isMoneyColumn(c) ? 'rp-nums text-slate-200 text-right' : 'text-slate-300'
                                 }`}
                               >
                                 {renderCell(c, r[c])}
@@ -403,12 +400,12 @@ type Row = Record<string, unknown>
 function MiniTable({ columns, rows, moneyCols }: { columns: string[]; rows: Row[]; moneyCols?: Set<string> }) {
   if (rows.length === 0) return <p className="text-sm text-slate-500 py-2">None.</p>
   return (
-    <div className="overflow-x-auto border border-surface-700 rounded-lg">
+    <div className="overflow-x-auto rp-frame">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-700 bg-surface-800/60">
+          <tr>
             {columns.map((c) => (
-              <th key={c} className="px-3 py-2 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">
+              <th key={c} className="px-3 py-2 text-left whitespace-nowrap">
                 {prettify(c)}
               </th>
             ))}
@@ -416,10 +413,10 @@ function MiniTable({ columns, rows, moneyCols }: { columns: string[]; rows: Row[
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-b border-surface-800 last:border-0">
+            <tr key={i}>
               {columns.map((c) => (
                 <td key={c} className={`px-3 py-2 whitespace-nowrap ${
-                  moneyCols?.has(c) || isMoneyColumn(c) ? 'font-mono text-slate-200 text-right' : 'text-slate-300'
+                  moneyCols?.has(c) || isMoneyColumn(c) ? 'rp-nums text-slate-200 text-right' : 'text-slate-300'
                 }`}>
                   {renderCell(c, r[c])}
                 </td>
@@ -430,6 +427,19 @@ function MiniTable({ columns, rows, moneyCols }: { columns: string[]; rows: Row[
       </table>
     </div>
   )
+}
+
+/** Tile colour: red for costs and negatives, green for income and profit, plain for the rest.
+ * Only the sign of the backend's decimal string is read (no arithmetic on money). */
+function tileTone(label: string, value: unknown): 'good' | 'bad' | undefined {
+  const text = String(value ?? '').trim()
+  if (text.startsWith('-') && Number(text) !== 0) return 'bad'
+  // "Revenue — Returns" is a heading prefix plus the real name: judge the real name only.
+  const name = label.replace(/^revenue\s*—\s*/i, '')
+  if (/cost|cogs|expense|discount|outstanding|payable|withheld|deduction|outflow/i.test(name)) return 'bad'
+  if (/return|tax|vat|margin|pct|percent/i.test(name)) return undefined
+  if (/sales|income|profit|receivable|inflow/i.test(name)) return 'good'
+  return undefined
 }
 
 /** Label/value pairs rendered as a two-column strip — for reports that are
@@ -444,9 +454,9 @@ function KeyValueGrid({ pairs }: { pairs: { label: string; value: unknown }[] })
         // formatCurrency() would print "₦100.00" for a 100% margin otherwise.
         const isPercent = /pct|percent|%/i.test(label)
         return (
-          <div key={label} className="p-3 bg-surface-800/60 border border-surface-700 rounded-lg">
-            <p className="text-[11px] text-slate-500 uppercase tracking-wider">{label}</p>
-            <p className="text-sm font-mono text-white mt-0.5">
+          <div key={label} className="rp-tile" data-tone={isNumeric ? tileTone(label, value) : undefined}>
+            <p className="rp-tile-label">{label}</p>
+            <p className="rp-tile-value">
               {!isNumeric ? String(value ?? '—') : isPercent ? `${value}%` : formatCurrency(String(value))}
             </p>
           </div>
@@ -491,7 +501,7 @@ function NestedSections({ payload }: { payload: ReportPayload }) {
               <div className="flex items-baseline justify-between mb-1.5">
                 <h3 className="text-sm font-semibold text-white">{String(acct.account_code)} — {String(acct.account_name)}</h3>
                 <p className="text-xs text-slate-500">
-                  Opening {money(acct.opening_balance)} · Closing <span className="text-slate-300 font-mono">{money(acct.closing_balance)}</span>
+                  Opening {money(acct.opening_balance)} · Closing <span className="text-slate-300 rp-nums">{money(acct.closing_balance)}</span>
                 </p>
               </div>
               <MiniTable
@@ -555,7 +565,7 @@ function NestedSections({ payload }: { payload: ReportPayload }) {
           <div key={label}>
             <div className="flex items-baseline justify-between mb-1.5">
               <h3 className="text-sm font-semibold text-white">{label}</h3>
-              <p className="text-xs text-slate-500">Total <span className="text-slate-300 font-mono">{money(total)}</span></p>
+              <p className="text-xs text-slate-500">Total <span className="text-slate-300 rp-nums">{money(total)}</span></p>
             </div>
             <MiniTable columns={['code', 'name', 'balance']} rows={rows} />
           </div>
@@ -600,15 +610,15 @@ function NestedSections({ payload }: { payload: ReportPayload }) {
     return (
       <div className="p-5 space-y-8">
         <section>
-          <h2 className="text-sm font-bold text-white uppercase tracking-wide mb-3">Profit &amp; Loss</h2>
+          <h2 className="rp-title mb-3">Profit &amp; Loss</h2>
           <NestedSections payload={data.profit_and_loss as Row} />
         </section>
         <section>
-          <h2 className="text-sm font-bold text-white uppercase tracking-wide mb-3">Balance Sheet</h2>
+          <h2 className="rp-title mb-3">Balance Sheet</h2>
           <NestedSections payload={data.balance_sheet as Row} />
         </section>
         <section>
-          <h2 className="text-sm font-bold text-white uppercase tracking-wide mb-3">Trial Balance</h2>
+          <h2 className="rp-title mb-3">Trial Balance</h2>
           <MiniTable columns={['code', 'name', 'type', 'balance']} rows={data.trial_balance as Row[]} />
         </section>
       </div>
@@ -628,7 +638,7 @@ function NestedSections({ payload }: { payload: ReportPayload }) {
       {scalarPairs.length > 0 && <KeyValueGrid pairs={scalarPairs} />}
       {nestedEntries.map(([key, value]) => (
         <div key={key}>
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">{prettify(key)}</h3>
+          <h3 className="rp-title mb-1.5">{prettify(key)}</h3>
           {Array.isArray(value) && value.every(isRecord) ? (
             <MiniTable columns={value.length ? Object.keys(value[0] as Row) : []} rows={value as Row[]} />
           ) : isRecord(value) ? (
@@ -662,11 +672,11 @@ function TotalsStrip({ payload }: { payload: Record<string, unknown> }) {
   }
   if (items.length === 0) return null
   return (
-    <div className="border-t border-surface-700 px-5 py-3 flex flex-wrap gap-x-8 gap-y-2">
+    <div className="border-t-[1.5px] border-[color:var(--ds-row-bd)] p-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((it) => (
-        <div key={it.label}>
-          <p className="text-[11px] text-slate-500 uppercase tracking-wider">{it.label}</p>
-          <p className="text-sm font-mono font-semibold text-white">{it.value}</p>
+        <div key={it.label} className="rp-tile">
+          <p className="rp-tile-label">{it.label}</p>
+          <p className="rp-tile-value">{it.value}</p>
         </div>
       ))}
     </div>
@@ -751,9 +761,9 @@ function ExportReportsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative card w-full max-w-lg max-h-[85vh] flex flex-col">
-        <div className="px-5 py-4 border-b border-surface-700 flex items-center justify-between shrink-0">
-          <h2 className="text-base font-semibold text-white">Export Reports</h2>
+      <div className="relative card ds-modal w-full max-w-lg max-h-[85vh] flex flex-col">
+        <div className="px-5 py-4 border-b-[1.5px] border-[color:var(--ds-row-bd)] flex items-center justify-between shrink-0">
+          <h2 className="text-lg font-bold text-white">Export Reports</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
         </div>
 
@@ -761,7 +771,7 @@ function ExportReportsModal({
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-400">{selectedKeys.size} of {allKeys.length} selected</p>
-            <button onClick={toggleAll} className="text-xs text-brand-400 hover:text-brand-300 font-medium">
+            <button onClick={toggleAll} className="text-sm text-brand-400 hover:text-brand-300 font-medium">
               {allSelected ? 'Deselect all' : 'Select all'}
             </button>
           </div>
@@ -771,14 +781,14 @@ function ExportReportsModal({
             const allCatSelected = catKeys.every((k) => selectedKeys.has(k))
             return (
               <div key={cat.name}>
-                <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 cursor-pointer">
-                  <input type="checkbox" checked={allCatSelected} onChange={() => toggleCategory(cat)} className="accent-brand-500" />
+                <label className="rp-title flex items-center gap-2 mb-1.5 cursor-pointer !text-sm">
+                  <input type="checkbox" checked={allCatSelected} onChange={() => toggleCategory(cat)} className="accent-[var(--ds-link)]" />
                   {cat.name}
                 </label>
                 <div className="ml-5 grid sm:grid-cols-2 gap-x-3 gap-y-1">
                   {cat.reports.map((r) => (
                     <label key={r.key} className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer py-0.5">
-                      <input type="checkbox" checked={selectedKeys.has(r.key)} onChange={() => toggleKey(r.key)} className="accent-brand-500" />
+                      <input type="checkbox" checked={selectedKeys.has(r.key)} onChange={() => toggleKey(r.key)} className="accent-[var(--ds-link)]" />
                       <span className="truncate">{r.label}</span>
                     </label>
                   ))}
@@ -789,45 +799,41 @@ function ExportReportsModal({
         </div>
 
         {/* Options + submit */}
-        <div className="p-5 border-t border-surface-700 space-y-4 shrink-0">
+        <div className="p-5 border-t-[1.5px] border-[color:var(--ds-row-bd)] space-y-4 shrink-0">
           <div>
-            <p className="text-xs text-slate-400 mb-1.5">File format</p>
+            <p className="rp-label mb-1.5">File format</p>
             <div className="flex gap-2">
               <button
                 onClick={() => setCombine(true)}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs border transition-colors ${
-                  combine ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-surface-700 text-slate-400'
-                }`}
+                className="rp-item flex-1 !text-center !border-[color:var(--ds-row-bd)]"
+                aria-current={combine ? 'true' : undefined}
               >
-                One workbook<br /><span className="text-[10px] text-slate-500">a sheet per report</span>
+                One workbook<br /><span className="text-xs text-slate-500">a sheet per report</span>
               </button>
               <button
                 onClick={() => setCombine(false)}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs border transition-colors ${
-                  !combine ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-surface-700 text-slate-400'
-                }`}
+                className="rp-item flex-1 !text-center !border-[color:var(--ds-row-bd)]"
+                aria-current={!combine ? 'true' : undefined}
               >
-                Separate files<br /><span className="text-[10px] text-slate-500">.zip, one file per report</span>
+                Separate files<br /><span className="text-xs text-slate-500">.zip, one file per report</span>
               </button>
             </div>
           </div>
 
           <div>
-            <p className="text-xs text-slate-400 mb-1.5">Delivery</p>
+            <p className="rp-label mb-1.5">Delivery</p>
             <div className="flex gap-2 mb-2">
               <button
                 onClick={() => setMode('download')}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs border flex items-center justify-center gap-1.5 transition-colors ${
-                  mode === 'download' ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-surface-700 text-slate-400'
-                }`}
+                className="rp-item flex-1 flex items-center justify-center gap-1.5 !border-[color:var(--ds-row-bd)]"
+                aria-current={mode === 'download' ? 'true' : undefined}
               >
                 <Download size={13} /> Download
               </button>
               <button
                 onClick={() => setMode('email')}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs border flex items-center justify-center gap-1.5 transition-colors ${
-                  mode === 'email' ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-surface-700 text-slate-400'
-                }`}
+                className="rp-item flex-1 flex items-center justify-center gap-1.5 !border-[color:var(--ds-row-bd)]"
+                aria-current={mode === 'email' ? 'true' : undefined}
               >
                 <Mail size={13} /> Email
               </button>
