@@ -22,6 +22,7 @@ import '@/styles/app-shell.css'
 import { useCanSeeNavItem } from '@/lib/navAccess'
 import { HUB_FOR_GROUP } from '@/pages/hubs/hubConfig'
 import MiniFlyout from './MiniFlyout'
+import SidebarFooter from './SidebarFooter'
 import { DesignerIcon, type DesignerIconName } from '@/assets/designer-icons'
 
 /** Wraps a designer icon so it can sit in the nav data like a lucide icon. */
@@ -651,24 +652,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
         )}
       </nav>
 
-      {/* Platform admin + Sign out */}
-      <div className="sh-foot">
-        {/* Platform admin link — only for superusers */}
-        {user?.is_superuser && (
-          <NavLink
-            to="/platform-admin"
-            title="Platform Admin"
-            className={({ isActive }) => cn(rowClass(isActive), 'sh-row-danger')}
-          >
-            <Shield size={20} className="sh-ico shrink-0" />
-            <span className="sh-label">Platform Admin</span>
-          </NavLink>
-        )}
-        <button onClick={handleLogout} title="Sign Out" className="sh-row sh-row-danger">
-          <ICON.signOut size={20} className="sh-ico shrink-0" />
-          <span className="sh-label">Sign Out</span>
-        </button>
-      </div>
+      <SidebarFooter isSuperuser={!!user?.is_superuser} rail={railMode} onSignOut={handleLogout} />
     </aside>
   )
 }
