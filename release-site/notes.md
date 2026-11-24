@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-Audity has a fresh look: new fonts and colours throughout, a reorganised menu and home pages, and a new combined "New sale & invoice" page where you add items once and then create an invoice or complete a sale. Totals, VAT, deposits and refunds are now recorded more accurately, a total adjustment box lets you add a discount or extra charge, and voiding or editing an invoice now keeps your books in step.
+Your profit and loss now includes payroll, depreciation and approved supplier bills, so it matches your books. There is one VAT figure across the app, now shown as an estimate worksheet, plus new VAT settings for suppliers and bills. The profit and loss needs access to Accounting. Sales, deposits, voids and returns are recorded more accurately.
