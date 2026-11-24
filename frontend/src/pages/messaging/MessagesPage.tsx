@@ -27,6 +27,7 @@ import { teamApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import { cn, formatDate } from '@/lib/utils'
 import { useSearchParams } from 'react-router-dom'
+import { TEAMMATE_PALETTE, bubbleClass } from '@/lib/chatBubbles'
 
 interface TeamMember {
   id: string
@@ -60,17 +61,6 @@ function formatMessageTime(iso: string): string {
  *  reloads (hashed from their user id, not assigned by render order) —
  *  so the same teammate always reads as the same colour everywhere. Kept
  *  distinct from the brand teal used for "my" bubbles. */
-const TEAMMATE_PALETTE = [
-  { text: 'text-rose-400', bg: 'bg-rose-500/20' },
-  { text: 'text-sky-400', bg: 'bg-sky-500/20' },
-  { text: 'text-violet-400', bg: 'bg-violet-500/20' },
-  { text: 'text-cyan-400', bg: 'bg-cyan-500/20' },
-  { text: 'text-lime-400', bg: 'bg-lime-500/20' },
-  { text: 'text-fuchsia-400', bg: 'bg-fuchsia-500/20' },
-  { text: 'text-teal-400', bg: 'bg-teal-500/20' },
-  { text: 'text-indigo-400', bg: 'bg-indigo-500/20' },
-]
-
 function colorForUser(userId: string | null | undefined) {
   if (!userId) return TEAMMATE_PALETTE[0]
   let hash = 0
@@ -451,7 +441,8 @@ export default function MessagesPage() {
                         )}
                         <div className={cn(
                           'max-w-[75%] rounded-2xl px-3.5 py-2 text-sm',
-                          mine ? 'bg-brand-500 text-white' : 'bg-surface-800 text-slate-200'
+                          // chat-bubble-* live in styles/ds.css (blue + white text / lavender + dark text).
+                          mine ? bubbleClass('mine') : bubbleClass('theirs')
                         )}>
                           {msg.is_deleted ? (
                             <em className="text-slate-400">Message deleted</em>
@@ -466,7 +457,7 @@ export default function MessagesPage() {
                                   rel="noopener noreferrer"
                                   className={cn(
                                     'mt-1.5 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium underline-offset-2 hover:underline',
-                                    mine ? 'bg-white/10 text-white' : 'bg-surface-700 text-slate-100'
+                                    mine ? 'bg-white/15' : 'bg-black/5 dark:bg-white/10'
                                   )}
                                 >
                                   <FileText size={13} className="shrink-0" />

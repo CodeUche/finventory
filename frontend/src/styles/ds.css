@@ -302,8 +302,13 @@ html.light .ds{--ds-modal-bg:#FAFAFA}
   background:color-mix(in srgb,var(--ds-outline) 12%,transparent);
 }
 
-/* ---- icon buttons and text buttons that only change colour on hover ---- */
-.ds :is(button,a):is([class*="hover:bg-surface-"],[class*="hover:bg-brand-"]):not(.btn-primary):not(.btn-secondary):not(.sidebar-item):not(.sidebar-item-active):hover:not(:disabled){
+/* ---- icon buttons and text buttons that only change colour on hover ----
+   FIX (contrast pass): a FILLED button that also has a hover:bg-brand-* class (for example
+   "New conversation": bg-brand-500 hover:bg-brand-600) used to match this rule too. The rule
+   is more specific than the filled-button hover above, so it painted a see-through 12% tint
+   over the button on hover while the text stayed white (light) or dark blue (dark): the label
+   almost vanished. Filled buttons are now left out here and keep their own hover (lifts). */
+.ds :is(button,a):is([class*="hover:bg-surface-"],[class*="hover:bg-brand-"]):not(.btn-primary):not(.btn-secondary):not(.sidebar-item):not(.sidebar-item-active):not(:is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600)):hover:not(:disabled){
   background:color-mix(in srgb,var(--ds-link) 12%,transparent);
 }
 .ds button[class*="hover:text-white"]:hover, .ds button[class*="hover:text-slate-200"]:hover{color:var(--ds-link)}
@@ -737,3 +742,40 @@ html.light .ds{
   .ds .ds-lines-row{grid-template-columns:minmax(130px,2fr) 56px minmax(84px,1fr) 52px 70px minmax(84px,1fr) 44px}
   .ds .ds-lines{min-width:562px}
 }
+
+
+/* ============================================================================
+   MESSAGES AND NOTIFICATIONS CONTRAST (feat/messages-notifications-contrast)
+   DERIVED - not designer-approved: the designer drew no Messages screen. Choices follow the
+   kit: primary blue #1558EA, white text on it, lavender tints, ivory / dark-navy pages.
+   ========================================================================== */
+.ds{
+  --ds-bubble-mine:#1558EA; --ds-bubble-mine-tx:#FFFFFF;                 /* white on #1558EA is about 5.6:1 */
+  --ds-bubble-theirs:rgba(255,255,255,.14); --ds-bubble-theirs-tx:#FFFFFF; /* dark page: soft white glass */
+}
+html.light .ds{
+  --ds-bubble-theirs:#E6E3FA; --ds-bubble-theirs-tx:#1C1B1F;               /* light page: lavender tint, near-black text */
+}
+/* The text sits in a <p> and html.light p (index.css) paints every <p> slate on its own, so
+   the bubble's colour never reached it: slate on blue was 1.8:1. These rules set the colour on
+   the bubble AND on the elements inside it. */
+.ds .chat-bubble-mine{background:var(--ds-bubble-mine);color:var(--ds-bubble-mine-tx)}
+.ds .chat-bubble-theirs{background:var(--ds-bubble-theirs);color:var(--ds-bubble-theirs-tx)}
+.ds .chat-bubble-mine :is(p,span,em,a,svg){color:var(--ds-bubble-mine-tx)}
+.ds .chat-bubble-theirs :is(p,span,em,a,svg){color:var(--ds-bubble-theirs-tx)}
+
+/* A filled button that carries text-always-white ITSELF (the support-chat bubble) kept pure white
+   !important, but the kit turns those buttons lavender in dark mode: white on lavender was 1.25:1.
+   The button text follows the kit button text colour instead (its icons already inherit it). */
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600).text-always-white:not(.btn-primary){color:var(--ds-btn-tx) !important}
+
+/* ---- small action pills inside the bell panel (Approve / Reject / Received / Not yet) ----
+   DERIVED - not designer-approved. They use the kit's pill colours (green, red, grey), so text
+   and fill always pair. Hover deepens the fill and keeps the same text colour, so it never fades. */
+.ds .notif-btn{border:1px solid transparent;font-weight:500}
+.ds .notif-btn-good{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx);border-color:color-mix(in srgb,var(--ds-pill-green-tx) 35%,transparent)}
+.ds .notif-btn-bad{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx);border-color:color-mix(in srgb,var(--ds-pill-red-tx) 35%,transparent)}
+.ds .notif-btn-neutral{background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx);border-color:color-mix(in srgb,var(--ds-pill-gry-tx) 35%,transparent)}
+.ds .notif-btn-good:hover:not(:disabled){background:color-mix(in srgb,var(--ds-pill-green-tx) 16%,var(--ds-pill-green-bg))}
+.ds .notif-btn-bad:hover:not(:disabled){background:color-mix(in srgb,var(--ds-pill-red-tx) 16%,var(--ds-pill-red-bg))}
+.ds .notif-btn-neutral:hover:not(:disabled){background:color-mix(in srgb,var(--ds-pill-gry-tx) 16%,var(--ds-pill-gry-bg))}
