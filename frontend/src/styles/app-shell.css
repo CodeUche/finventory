@@ -126,6 +126,8 @@ html.light body .app-shell.app-shell{
 .sh-row > .sh-ico{flex:none;opacity:.88}
 .sh-row > span.sh-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sh-row .sh-caret{flex:none;opacity:.55}
+/* The caret on the ACTIVE row was 2.9:1 (light mode, .55 of the dark blue on the pale blue tile). Near full strength is above 3:1 in both modes. */
+.sh-row-on .sh-caret,.sidebar-item-active.sh-row .sh-caret{opacity:.9}
 .sh-row-on,
 .sidebar-item-active.sh-row{
   background:var(--sh-active-bg);color:var(--sh-active-tx);font-weight:500;

@@ -1,13 +1,18 @@
 /**
- * General Reports hub — the reviewer's nested report tree.
+ * General Reports: the Reports home, grouped by business question (Option B).
  *
- * Reads the backend report registry (/reports/catalog/) and renders every report
- * grouped into the spec's categories. Selecting one dispatches /reports/r/<key>/
- * for the chosen period and renders the result generically: flat `rows` payloads
- * become a table, nested payloads fall back to a readable key/value view.
+ * One route, three views chosen by the address:
+ *   /reports/all                   the home: question tiles, headline figures, quick links
+ *   /reports/all?group=<id>        one question's list of reports
+ *   /reports/all?report=<key>      one registry report (the old deep links keep working)
+ *
+ * The registry (/reports/catalog/) only lists reports this person may run, so the groups only
+ * show what they can open. Selecting a report dispatches /reports/r/<key>/ for the chosen period
+ * and renders the result generically: flat `rows` payloads become a table, nested payloads fall
+ * back to a readable key/value view.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   BarChart3, ChevronDown, ChevronRight, Download,
   FileSpreadsheet, Loader2, Mail, RefreshCw, Search, X,
@@ -19,7 +24,11 @@ import { useAuthStore } from '@/store/authStore'
 import { bypassNextGets, reportApi } from '@/services/api'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import { formatCurrency } from '@/lib/utils'
-import { CATEGORY_ORDER, type CatalogEntry } from '@/lib/reportCategories'
+import type { CatalogEntry } from '@/lib/reportCategories'
+import { fieldLabel, fieldLabelInline } from '@/lib/reportLabels'
+import { REPORT_GROUPS, REPORT_KEY_ALIASES, groupOfReport, visibleGroups } from '@/lib/reportGroups'
+import { useReportNeeds } from '@/hooks/useReportNeeds'
+import { GroupListView, ReportsHomeView } from '@/pages/reports/ReportsHome'
 
 // A resolver can return a plain object OR a bare array (trial_balance_report
 // returns `list`, not `dict`) — the payload type has to cover both so the
@@ -35,9 +44,8 @@ function isMoneyColumn(col: string): boolean {
   return MONEY_HINT.test(col) && !/count|quantity|hours|assets|orders|level|pct|percent/i.test(col)
 }
 
-function prettify(col: string): string {
-  return col.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
+/** Plain-English column / tile name (see lib/reportLabels.ts). */
+const prettify = fieldLabel
 
 function renderCell(col: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
@@ -77,16 +85,19 @@ export default function AllReportsPage() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogFailed, setCatalogFailed] = useState(false)
-  const [selected, setSelected] = useState<string | null>(searchParams.get('report'))
+  const rawReport = searchParams.get('report')
+  // An old saved key (gl-tax-summary) opens the report it became (tax-summary).
+  const selected = rawReport ? (REPORT_KEY_ALIASES[rawReport] ?? rawReport) : null
+  const groupId = searchParams.get('group')
   const [payload, setPayload] = useState<ReportPayload | null>(null)
   const [meta, setMeta] = useState<{ label: string; period_label: string } | null>(null)
   const [running, setRunning] = useState(false)
   const [exporting, setExporting] = useState<string | null>(null)
-  const [period, setPeriod] = useState<PeriodValue>({ period: 'year' })
+  // Default period is This month (Option B); This Year sits next to it in the selector.
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
   const [query, setQuery] = useState('')
-  const [openCats, setOpenCats] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(CATEGORY_ORDER.map((c) => [c.name, true])),
-  )
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({})
+  const can = useReportNeeds()
   const [showExportModal, setShowExportModal] = useState(false)
 
   const loadCatalog = useCallback(async () => {
@@ -139,8 +150,7 @@ export default function AllReportsPage() {
   useDataRefresh(() => { if (canRun && selected) runReport(selected) })
 
   const selectReport = (key: string) => {
-    setSelected(key)
-    setSearchParams((prev) => { prev.set('report', key); return prev }, { replace: true })
+    setSearchParams((prev) => { prev.set('report', key); prev.delete('group'); return prev }, { replace: true })
   }
 
   const handleExport = async (fmt: 'excel' | 'pdf') => {
@@ -161,14 +171,31 @@ export default function AllReportsPage() {
     }
   }
 
+  const catalogKeys = useMemo(() => new Set(catalog.map((r) => r.key)), [catalog])
+  const groups = useMemo(() => visibleGroups(catalog, can), [catalog, can])
+  const activeGroup = groups.find((g) => g.group.id === groupId) ?? null
+
+  // The report list beside the viewer and in the bulk-export box: registry reports only,
+  // in the same groups as the home, filtered by the search box.
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase()
     const match = (r: CatalogEntry) =>
       !q || r.label.toLowerCase().includes(q) || r.description.toLowerCase().includes(q)
-    return CATEGORY_ORDER
-      .map((c) => ({ ...c, reports: catalog.filter((r) => r.category === c.name && match(r)) }))
-      .filter((c) => c.reports.length > 0)
+    const byKey = new Map(catalog.map((r) => [r.key, r]))
+    const placedKeys = new Set(REPORT_GROUPS.flatMap((g) => g.entries.flatMap((e) => e.targets.flatMap((t) => (t.key ? [t.key] : [])))))
+    const out: GroupedCategory[] = REPORT_GROUPS.map((g) => ({
+      id: g.id,
+      name: g.name,
+      icon: g.icon,
+      reports: g.entries
+        .flatMap((e) => e.targets.flatMap((t) => { const r = t.key ? byKey.get(t.key) : undefined; return r ? [r] : [] }))
+        .filter(match),
+    })).filter((g) => g.reports.length > 0)
+    const rest = catalog.filter((r) => !placedKeys.has(r.key) && match(r))
+    if (rest.length) out.push({ id: 'other', name: 'Other reports', icon: FileSpreadsheet, reports: rest })
+    return out
   }, [catalog, query])
+  const selectedGroup = selected ? groupOfReport(selected) : null
 
   // A payload renders as a plain table whenever it's already row-shaped: a
   // bare array (trial-balance), or a dict whose `rows`/`items`/`groups` key
@@ -180,31 +207,55 @@ export default function AllReportsPage() {
   const rows = extractFlatRows(payload)
   const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : []
 
+  const view: 'home' | 'group' | 'report' = selected ? 'report' : activeGroup ? 'group' : 'home'
+  const refresh = () => { bypassNextGets(); loadCatalog(); if (selected) runReport(selected) }
+
   return (
     <div className="space-y-5">
-      {/* Header */}
+      {/* Header + the shared filter bar (period). */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">General Reports</h1>
+          {view !== 'home' && (
+          <nav aria-label="Breadcrumb" className="text-sm text-slate-400 flex flex-wrap items-center gap-1.5 mb-0.5">
+            {(
+              <>
+                <Link to="/reports/all" className="rp-crumb">Reports</Link>
+                {view === 'group' && activeGroup && <><span aria-hidden="true">&rsaquo;</span><span>{activeGroup.group.name}</span></>}
+                {view === 'report' && selectedGroup && (
+                  <><span aria-hidden="true">&rsaquo;</span><Link to={`/reports/all?group=${selectedGroup.id}`} className="rp-crumb">{selectedGroup.name}</Link></>
+                )}
+              </>
+            )}
+          </nav>
+          )}
+          <h1 className="text-2xl font-bold text-white">
+            {view === 'group' && activeGroup ? activeGroup.group.name : 'General Reports'}
+          </h1>
           <p className="text-slate-400 text-sm">
-            {catalogLoading ? 'Loading…' : `${catalog.length} reports across ${grouped.length} categories`}
+            {view === 'home'
+              ? 'Pick a question. Every report is still here.'
+              : view === 'group' ? 'Pick a report.'
+              : catalogLoading ? 'Loading…' : `${catalog.length} reports in ${grouped.length} groups`}
           </p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2 flex-wrap">
-          <PeriodSelector value={period} onChange={setPeriod} />
+          {view !== 'group' && <PeriodSelector value={period} onChange={setPeriod} />}
+          {view === 'report' && (
+            <button
+              onClick={() => setShowExportModal(true)}
+              disabled={catalogLoading || catalog.length === 0}
+              className="btn-ghost text-xs flex items-center gap-1.5 disabled:opacity-40"
+              title="Export several reports at once"
+            >
+              <FileSpreadsheet size={14} /> Export Reports
+            </button>
+          )}
           <button
-            onClick={() => setShowExportModal(true)}
-            disabled={catalogLoading || catalog.length === 0}
-            className="btn-ghost text-xs flex items-center gap-1.5 disabled:opacity-40"
-            title="Export several reports at once"
-          >
-            <FileSpreadsheet size={14} /> Export Reports
-          </button>
-          <button
-            onClick={() => { bypassNextGets(); loadCatalog(); if (selected) runReport(selected) }}
+            onClick={refresh}
             disabled={running || catalogLoading}
             className="btn-ghost p-2 text-slate-400 hover:text-white"
             title="Refresh"
+            aria-label="Refresh"
           >
             <RefreshCw size={16} className={running || catalogLoading ? 'animate-spin' : ''} />
           </button>
@@ -219,8 +270,22 @@ export default function AllReportsPage() {
         />
       )}
 
+      {view === 'home' && (
+        catalogFailed ? (
+          <div className="card py-16 text-center space-y-3">
+            <p className="text-slate-300 font-medium">The list of reports could not be loaded.</p>
+            <button onClick={refresh} className="btn-ghost">Try again</button>
+          </div>
+        ) : (
+          <ReportsHomeView groups={groups} period={period} catalogKeys={catalogKeys} catalogReady={!catalogLoading} />
+        )
+      )}
+
+      {view === 'group' && activeGroup && <GroupListView vg={activeGroup} />}
+
+      {view === 'report' && (
       <div className="grid lg:grid-cols-[minmax(0,300px)_1fr] gap-4 items-start">
-        {/* ── Report tree ── */}
+        {/* ── Report list (same groups as the home) ── */}
         <div className="card p-3 space-y-2 lg:sticky lg:top-4">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
@@ -228,6 +293,7 @@ export default function AllReportsPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search reports…"
+              aria-label="Search reports"
               className="input w-full pl-8 py-2 text-sm"
             />
           </div>
@@ -240,12 +306,13 @@ export default function AllReportsPage() {
             <div className="space-y-1 max-h-[70vh] overflow-y-auto pr-1">
               {grouped.map((cat) => {
                 const Icon = cat.icon
-                const open = openCats[cat.name] ?? true
+                const open = openCats[cat.id] ?? (selectedGroup?.id === cat.id || !!query.trim())
                 return (
-                  <div key={cat.name}>
+                  <div key={cat.id}>
                     <button
-                      onClick={() => setOpenCats((p) => ({ ...p, [cat.name]: !open }))}
+                      onClick={() => setOpenCats((p) => ({ ...p, [cat.id]: !open }))}
                       className="rp-cat"
+                      aria-expanded={open}
                     >
                       {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                       <Icon size={14} />
@@ -276,15 +343,7 @@ export default function AllReportsPage() {
 
         {/* ── Report viewer ── */}
         <div className="card p-0 overflow-hidden min-h-[340px]">
-          {!selected ? (
-            <div className="flex flex-col items-center justify-center text-center py-24 px-6">
-              <BarChart3 size={34} className="text-slate-600 mb-3" />
-              <p className="text-slate-300 font-medium">Choose a report</p>
-              <p className="text-slate-500 text-sm mt-1 max-w-sm">
-                Pick any report from the list. Set the period first — it applies to whichever report you open.
-              </p>
-            </div>
-          ) : blocked ? (
+          {blocked ? (
             <div className="flex flex-col items-center justify-center text-center py-24 px-6" data-testid="report-no-access">
               <BarChart3 size={34} className="text-slate-600 mb-3" />
               <p className="text-slate-300 font-medium">Some reports need extra permission. Ask an owner or admin.</p>
@@ -379,6 +438,7 @@ export default function AllReportsPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }
@@ -581,7 +641,7 @@ function NestedSections({ payload }: { payload: ReportPayload }) {
   if (isRecord(data.revenue) && 'gross_profit' in data) {
     const revenue = data.revenue as Row
     const pairs = [
-      ...Object.entries(revenue).map(([k, v]) => ({ label: `Revenue — ${prettify(k)}`, value: v })),
+      ...Object.entries(revenue).map(([k, v]) => ({ label: `Revenue — ${fieldLabelInline(k)}`, value: v })),
       ...(['cost_of_goods_sold', 'gross_profit', 'gross_margin_pct', 'operating_expenses',
            'miscellaneous_income', 'net_profit', 'net_margin_pct'] as const)
         .filter((k) => k in data)
@@ -596,7 +656,7 @@ function NestedSections({ payload }: { payload: ReportPayload }) {
     const pairs = [
       ...Object.entries(vat)
         .filter(([k]) => !['period_start', 'period_end'].includes(k))
-        .map(([k, v]) => ({ label: `VAT — ${prettify(k)}`, value: v })),
+        .map(([k, v]) => ({ label: `VAT — ${fieldLabelInline(k)}`, value: v })),
       ...(['wht_withheld', 'paye_payable'] as const)
         .filter((k) => k in data)
         .map((k) => ({ label: prettify(k), value: data[k] })),
@@ -692,7 +752,7 @@ function TotalsStrip({ payload }: { payload: Record<string, unknown> }) {
 // backend/apps/reports/views.py), which runs every selected report through
 // the same flatten_for_export() normaliser the single-report export uses.
 
-type GroupedCategory = { name: string; icon: React.ElementType; reports: CatalogEntry[] }
+type GroupedCategory = { id: string; name: string; icon: React.ElementType; reports: CatalogEntry[] }
 
 function ExportReportsModal({
   grouped, period, onClose,

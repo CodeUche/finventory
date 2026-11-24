@@ -15,8 +15,6 @@ import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { FEATURES } from '@/lib/featureFlags'
-import { CATEGORY_ORDER } from '@/lib/reportCategories'
-import { useReportCatalog } from '@/hooks/useReportCatalog'
 import type { ModuleKey } from '@/types'
 import '@/styles/app-shell.css'
 import { useCanSeeNavItem } from '@/lib/navAccess'
@@ -196,22 +194,6 @@ const GROUP_ICONS: Record<string, React.ElementType> = {
   'HELP DESK': ICON.tickets,
 }
 
-// The "GENERAL REPORTS" section's fixed links — these are separate, richer
-// pages (charts, drill-down, dedicated layouts) rather than registry entries,
-// so they stay as plain links above the fetched category tree instead of
-// being replaced by it. (Sales By Customer/Product and Balance Sheet all have
-// a same-named counterpart inside the registry tree too — that's expected;
-// the tree entry runs the generic report engine, these links open the
-// purpose-built page for that report.)
-const REPORTS_FIXED_LINKS: { name: string; href: string; icon: React.ElementType; module?: ModuleKey }[] = [
-  { name: 'All Reports', href: '/reports/all', icon: BookMarked, module: 'reports' },
-  { name: 'Financial Statements', href: '/reports', icon: BarChart3, module: 'reports' },
-  { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
-  { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
-  { name: 'Sales by Customer', href: '/reports/sales-by-customer', icon: Users, module: 'reports' },
-  { name: 'Sales by Product', href: '/reports/sales-by-product', icon: ShoppingCart, module: 'reports' },
-]
-
 // General Reports sits right after the 6th group (HR) in the designer's menu.
 const REPORTS_AFTER = 7
 
@@ -329,33 +311,11 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   const toggleSettingsGroup = (g: string) =>
     setSettingsGroupsOpen((prev) => ({ ...prev, [g]: !prev[g] }))
 
-  // ─── Reports sub-nav — same collapsible-tree pattern as Settings above ────
-  const { catalog: reportCatalog } = useReportCatalog()
-  const activeReportKey = pathname === '/reports/all' ? new URLSearchParams(search).get('report') : null
-  const reportsGrouped = CATEGORY_ORDER
-    .map((c) => ({ ...c, reports: reportCatalog.filter((r) => r.category === c.name) }))
-    .filter((c) => c.reports.length > 0)
-
-  const [reportsOpen, setReportsOpen] = useState(() => pathname.startsWith('/reports'))
-  const [reportGroupsOpen, setReportGroupsOpen] = useState<Record<string, boolean>>({})
-  const toggleReportGroup = (g: string) =>
-    setReportGroupsOpen((prev) => ({ ...prev, [g]: !prev[g] }))
-  // Auto-expand whichever category holds the currently-selected report, once
-  // the catalog has loaded enough to know which category that is. Runs after
-  // the catalog fetch resolves (reportsGrouped is empty until then), so a
-  // sidebar link click that lands on /reports/all?report=<key> reveals its
-  // own category instead of requiring the user to hunt for it.
-  useEffect(() => {
-    if (!activeReportKey || reportsGrouped.length === 0) return
-    const activeGroup = reportsGrouped.find((c) => c.reports.some((r) => r.key === activeReportKey))?.name
-    if (activeGroup) setReportGroupsOpen((prev) => (prev[activeGroup] ? prev : { ...prev, [activeGroup]: true }))
-  }, [activeReportKey, reportsGrouped.length])
-
   // Only the best (longest) matching link is highlighted, so /budgets/periods does not
   // also light up /budgets, and /reports/stock does not also light up /reports.
   const bestHref = [
     ...navGroups.flatMap((g) => g.items.map((i) => i.href.split('#')[0])),
-    ...REPORTS_FIXED_LINKS.map((i) => i.href),
+    '/reports/all',
     ...Object.values(HUB_FOR_GROUP).map((h) => `/hub/${h.slug}`),
   ]
     .filter((h) => pathname === h || pathname.startsWith(h + '/'))
@@ -504,79 +464,18 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
       <nav className="sh-nav">
         {navGroups.slice(0, REPORTS_AFTER).map((g, i) => renderGroup(g, i))}
 
-        {/* GENERAL REPORTS sub-nav — fixed links to the dedicated report
-            pages, then a fetched, collapsible category tree mirroring
-            AllReportsPage.tsx's "General Reports" hub (/reports/all), same
-            two-level pattern as the SETTINGS sub-nav below. */}
-        {!billingOnly && canSeeItem('reports') && railMode && (
-          <MiniFlyout
-            icon={ICON.reports}
-            label="General Reports"
-            active={pathname.startsWith('/reports')}
-            items={REPORTS_FIXED_LINKS.filter((i) => canSeeItem(i.module)).map((i) => ({ name: i.name, to: i.href, icon: i.icon, active: isBest(i.href) }))}
-          />
-        )}
+        {/* General Reports: ONE flat link, as in the designer's menu. Every report, and the old
+            shortcuts (Financial Statements, Balance Sheet, Stock, Sales by Customer / Product),
+            are reached from the Reports home it opens. */}
         {!billingOnly && canSeeItem('reports') && (
-          <div className="sh-mini-hide">
-            <button
-              onClick={() => setReportsOpen((v) => !v)}
-              className="sh-row"
-              aria-expanded={reportsOpen}
-            >
-              <ICON.reports size={20} className="sh-ico shrink-0" />
-              <span className="sh-label">General Reports</span>
-              {reportsOpen ? <ChevronDown size={16} className="sh-caret" /> : <ChevronRight size={16} className="sh-caret" />}
-            </button>
-
-            {reportsOpen && (
-              <div className="sh-sub">
-                {/* Fixed links to the dedicated, richer report pages. */}
-                {REPORTS_FIXED_LINKS
-                  .filter((item) => canSeeItem(item.module))
-                  .map((item) => (
-                    <NavLink
-                      key={item.href}
-                      to={item.href}
-                      end={item.href === '/reports/all'}
-                      title={item.name}
-                      className={({ isActive }) => rowClass(isActive, item.href)}
-                    >
-                      <item.icon size={18} className="sh-ico shrink-0" />
-                      <span className="sh-label">{item.name}</span>
-                    </NavLink>
-                  ))}
-
-                {/* Fetched category tree — every report in the registry,
-                    grouped exactly like the All Reports page. */}
-                {reportsGrouped.map((cat) => {
-                  const isGroupOpen = reportGroupsOpen[cat.name] ?? false
-                  return (
-                    <div key={cat.name}>
-                      <button onClick={() => toggleReportGroup(cat.name)} className="sh-sub-head" aria-expanded={isGroupOpen}>
-                        <cat.icon size={13} className="shrink-0" />
-                        <span>{cat.name}</span>
-                        {isGroupOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                      </button>
-
-                      {isGroupOpen && cat.reports.map((r) => {
-                        const isActive = activeReportKey === r.key
-                        return (
-                          <Link
-                            key={r.key}
-                            to={`/reports/all?report=${r.key}`}
-                            title={r.description}
-                            className={cn('sh-row', isActive && 'sh-row-on')}
-                          >
-                            <span className="sh-label">{r.label}</span>
-                          </Link>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+          <NavLink
+            to="/reports/all"
+            title="General Reports"
+            className={() => rowClass(pathname.startsWith('/reports'))}
+          >
+            <ICON.reports size={20} className="sh-ico shrink-0" />
+            <span className="sh-label">General Reports</span>
+          </NavLink>
         )}
 
         {navGroups.slice(REPORTS_AFTER).map((g, i) => renderGroup(g, i + REPORTS_AFTER))}

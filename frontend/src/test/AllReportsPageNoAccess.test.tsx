@@ -56,9 +56,9 @@ describe('AllReportsPage deep link to a report the person cannot run', () => {
     expect(screen.queryByTestId('report-no-access')).toBeNull()
   })
 
-  it('hides categories that have no allowed reports', async () => {
+  it('hides groups that have no allowed reports', async () => {
     renderAt('profit-loss')
     await screen.findAllByText('profit-loss')
-    expect(screen.queryByText('Payroll & HR')).toBeNull()
+    expect(screen.queryByText('People and payroll')).toBeNull()
   })
 })

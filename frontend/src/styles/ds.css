@@ -834,3 +834,43 @@ html.light .ds{
 .ds .rp-callout[data-tone="bad"]{--rp-c:var(--ds-bad)}
 .ds .rp-callout[data-tone="warn"]{--rp-c:var(--ds-warn)}
 .ds .rp-callout .rp-callout-value{font-weight:700;color:var(--rp-c);font-variant-numeric:tabular-nums}
+
+
+/* ============================================================================
+   REPORTS HOME (Option B: reports grouped by business question).
+   DERIVED - not designer-approved: the designer drew no Reports screens. Tiles reuse the kit's
+   lavender tile, pill and row colours; tokens only, so light and dark both follow the kit.
+   ========================================================================== */
+.ds .rp-q-tile{
+  display:flex;flex-direction:column;gap:8px;min-width:0;padding:16px 18px;border-radius:12px;text-decoration:none;
+  background:var(--ds-tile);border:1.5px solid var(--ds-tile-bd);color:var(--ds-ink);
+  box-shadow:0 2px 8px color-mix(in srgb,var(--ds-link) 14%,transparent);transition:background .12s,border-color .12s;
+}
+.ds .rp-q-tile:hover{background:var(--ds-row-hover);border-color:var(--ds-link)}
+.ds .rp-q-tile:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .rp-q-head{display:flex;align-items:center;gap:8px;color:var(--ds-link)}
+.ds .rp-q-name{font-size:17px;font-weight:600;color:var(--ds-title)}
+.ds .rp-q-blurb{font-size:14px;color:var(--ds-muted)}
+.ds .rp-q-figure{display:flex;flex-direction:column;gap:0;margin-top:2px}
+.ds .rp-q-value{font-size:22px;font-weight:700;line-height:1.25;color:var(--ds-title);overflow-wrap:anywhere}
+.ds .rp-q-flabel{font-size:13px;color:var(--ds-tile-tx)}
+.ds .rp-q-foot{display:flex;align-items:center;gap:2px;margin-top:auto;font-size:13px;font-weight:500;color:var(--ds-link)}
+/* Pill-shaped link (quick links, and the small "also" links on a report row). */
+.ds .rp-chip{display:inline-flex;align-items:center;padding:6px 14px;border-radius:999px;font-size:14px;font-weight:500;text-decoration:none;
+  background:var(--ds-pill-blue-bg);color:var(--ds-pill-blue-tx);border:1px solid color-mix(in srgb,var(--ds-pill-blue-tx) 30%,transparent)}
+.ds .rp-chip:hover{background:color-mix(in srgb,var(--ds-pill-blue-tx) 14%,var(--ds-pill-blue-bg))}
+.ds .rp-chip:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .rp-chip-sm{padding:3px 10px;font-size:13px}
+/* One report in a group's list. */
+.ds .rp-entries{list-style:none;margin:0;padding:0;border:1.5px solid var(--ds-card-bd);border-radius:12px;overflow:hidden}
+.ds .rp-entries > li + li{border-top:1px solid var(--ds-row-bd)}
+.ds .rp-entry{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:0 16px 0 0}
+.ds .rp-entry:hover{background:var(--ds-row-hover)}
+.ds .rp-entry-main{flex:1 1 280px;min-width:0;display:flex;flex-direction:column;gap:2px;padding:12px 0 12px 20px;text-decoration:none;color:var(--ds-ink)}
+.ds .rp-entry-main:focus-visible{outline:2px solid var(--ds-link);outline-offset:-2px;border-radius:8px}
+.ds .rp-entry-name{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--ds-title)}
+.ds .rp-entry-blurb{font-size:13px;color:var(--ds-muted)}
+.ds .rp-entry-also{display:flex;flex-wrap:wrap;gap:6px;padding:8px 0}
+.ds .rp-badge{padding:1px 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx)}
+.ds .rp-crumb{color:var(--ds-link);text-decoration:none}
+.ds .rp-crumb:hover{text-decoration:underline}

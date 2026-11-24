@@ -100,78 +100,77 @@ test('Billing deep-links land on the right sections', async ({ page }) => {
   }
 })
 
-// ── General Reports hub ──────────────────────────────────────────────────────
+// ── General Reports (Option B: grouped by business question) ────────────────
 
-test('reports hub lists every spec category and runs a report from each', async ({ page }) => {
+test('sidebar shows ONE flat General Reports link and no report sub-menu', async ({ page }) => {
+  const { errors } = guardAgainstCrashes(page)
+  await login(page)
+  const link = page.locator('aside').getByRole('link', { name: 'General Reports', exact: true })
+  await expect(link).toHaveCount(1)
+  await expect(link).toHaveAttribute('href', '/reports/all')
+  // The old expandable sub-menu entries are gone from the sidebar (they live on the Reports home now).
+  for (const old of ['Financial Statements', 'Stock Reports', 'Sales by Product']) {
+    await expect(page.locator('aside').getByRole('link', { name: old, exact: true })).toHaveCount(0)
+  }
+  await assertNoCrash(page, errors)
+})
+
+test('Reports home shows the question tiles and quick links', async ({ page }) => {
   const { errors } = guardAgainstCrashes(page)
   await login(page)
   await page.goto('/reports/all')
 
   await expect(page.getByRole('heading', { name: 'General Reports' })).toBeVisible()
-
-  const CATEGORIES = [
-    'Financial Statements', 'General Ledger', 'Accounts Receivable',
-    'Accounts Payable', 'Inventory', 'Fixed Assets', 'Payroll & HR',
-    'Accountant Reports',
-  ]
-  for (const cat of CATEGORIES) {
-    await expect(page.getByRole('button', { name: new RegExp(cat, 'i') }).first())
+  for (const q of [
+    'How am I doing?', 'Who owes me?', 'What do I owe?', 'Where is my cash?',
+    'What do I owe the tax office?', 'The books',
+  ]) {
+    await expect(page.getByRole('link', { name: new RegExp(q.replace('?', '\?'), 'i') }).first())
       .toBeVisible({ timeout: 30_000 })
   }
+  // The old sub-menu shortcuts are reachable from here.
+  const quick = page.getByTestId('quick-links')
+  await expect(quick.getByRole('link', { name: 'Balance Sheet' })).toBeVisible()
+  await expect(quick.getByRole('link', { name: 'Stock Reports' })).toBeVisible()
+
+  // A tile opens its list of reports.
+  await page.getByTestId('group-tile-books').click()
+  await expect(page).toHaveURL(/\/reports\/all\?group=books/)
+  await expect(page.getByTestId('report-entry-trial-balance')).toBeVisible()
 
   await assertNoCrash(page, errors)
 })
 
-test('every report in the hub opens without crashing', async ({ page }) => {
+test('every report opens by its old link without crashing', async ({ page }) => {
   const { errors } = guardAgainstCrashes(page)
   await login(page)
-  await page.goto('/reports/all')
-  await expect(page.getByRole('heading', { name: 'General Reports' })).toBeVisible()
 
-  // Walk the whole tree: click each report and confirm it renders a result
-  // (table, empty-state or nested view) rather than the error boundary.
-  const reportButtons = page.locator('div.card button', { hasNotText: /^$/ })
-  await page.waitForTimeout(1500)   // let the catalog settle
-
-  const REPORTS = [
-    'Profit & Loss', 'Cash Flow Report', 'Balance Sheet', 'Trial Balance',
-    'Net Tax Report (VAT Return)', 'Tax Summary Report',
-    'Account List', 'Cash Register Report', 'Pay Bills Report', 'Deposit Report',
-    'Transaction Report (GL Detail)', 'Payments', 'Journal Register',
-    'Sales By Customer', 'Customers Report', 'Customer Receipts',
-    'Purchases Report', 'Purchase Return', 'Product Purchases Report', 'Suppliers Report',
-    'Stock Report', 'Stock Valuation Report',
-    'Asset Register', 'Asset By Category', 'Asset By Location',
-    'Depreciation Report', 'Depreciation Method Report',
-    'Employee List', 'Payroll Report', 'Attendance Summary',
-    'Financial Report Pack', 'Statement of Changes in Equity',
+  const KEYS = [
+    'profit-loss', 'cash-flow', 'balance-sheet', 'trial-balance', 'vat-return', 'tax-summary',
+    'financial-report-pack', 'changes-in-equity', 'notes', 'account-list', 'cash-register', 'pay-bills',
+    'deposits', 'gl-detail', 'payments', 'journal-register', 'sales-by-customer', 'customers-report',
+    'customer-receipts', 'purchases-report', 'purchase-returns', 'product-purchases', 'suppliers-report',
+    'stock-report', 'stock-valuation', 'asset-register', 'assets-by-category', 'assets-by-location',
+    'depreciation-report', 'depreciation-method', 'employee-list', 'payroll-report', 'attendance-summary',
   ]
-
-  for (const name of REPORTS) {
-    const btn = page.getByRole('button', { name, exact: true }).first()
-    if (await btn.count() === 0) continue      // plan-gated in this org
-    // Wait for the report's own request to settle before moving on — a real user
-    // waits for the result. Firing all 30+ back-to-back queues them behind each
-    // other and trips the client's request timeout, which isn't a real failure.
+  for (const key of KEYS) {
+    // A real user waits for the result; firing them back-to-back trips the client request timeout.
     await Promise.all([
       page.waitForResponse(
-        (r) => r.url().includes('/reports/') && r.request().method() === 'GET',
+        (r) => r.url().includes(`/reports/r/${key}/`) && r.request().method() === 'GET',
         { timeout: 30_000 },
-      ).catch(() => null),
-      btn.click(),
+      ).catch(() => null),   // plan-gated reports are not requested at all
+      page.goto(`/reports/all?report=${key}`, { waitUntil: 'domcontentloaded' }),
     ])
-    // Either data, an empty state, or a nested render — but never a crash.
     await expect(page.getByText('Something went wrong')).toHaveCount(0)
   }
-
-  expect(reportButtons).toBeTruthy()
   await assertNoCrash(page, errors)
 })
 
-test('reports hub search filters the tree', async ({ page }) => {
+test('report list beside a report is searchable', async ({ page }) => {
   const { errors } = guardAgainstCrashes(page)
   await login(page)
-  await page.goto('/reports/all')
+  await page.goto('/reports/all?report=profit-loss')
   await page.getByPlaceholder('Search reports…').fill('depreciation')
   await expect(page.getByRole('button', { name: 'Depreciation Report', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Balance Sheet', exact: true })).toHaveCount(0)

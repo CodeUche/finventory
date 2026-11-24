@@ -21,6 +21,7 @@ import {
   CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { stockReportApi, inventoryApi, reportApi, urlToDataUrl } from '@/services/api'
+import { useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import type { Organisation } from '@/types'
 import toast from 'react-hot-toast'
@@ -549,7 +550,12 @@ export default function StockReportsPage() {
   const reorderFill  = DS_CHART.neutral
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const [tab, setTab] = useState<ReportTab>('availability')
+  // The Reports home links straight to a tab with ?tab=; anything else opens Availability.
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<ReportTab>(() => {
+    const raw = searchParams.get('tab')
+    return (['availability', 'usage', 'transfers', 'stock_card', 'valuation'] as const).find((t) => t === raw) ?? 'availability'
+  })
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [loading, setLoading] = useState(false)
