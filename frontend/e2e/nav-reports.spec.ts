@@ -108,6 +108,12 @@ test('sidebar shows ONE flat General Reports link and no report sub-menu', async
   const link = page.locator('aside').getByRole('link', { name: 'General Reports', exact: true })
   await expect(link).toHaveCount(1)
   await expect(link).toHaveAttribute('href', '/reports/all')
+  // Designer order: Owner Analytics, then General Reports, then Settings.
+  const owner = page.locator('aside').getByRole('link', { name: /owner'?s? analytics/i })
+  const settings = page.locator('aside').getByRole('button', { name: 'Settings' }).first()
+  const y = async (l: import('@playwright/test').Locator) => (await l.boundingBox())?.y ?? -1
+  if (await owner.count()) expect(await y(owner.first())).toBeLessThan(await y(link))
+  if (await settings.count()) expect(await y(link)).toBeLessThan(await y(settings))
   // The old expandable sub-menu entries are gone from the sidebar (they live on the Reports home now).
   for (const old of ['Financial Statements', 'Stock Reports', 'Sales by Product']) {
     await expect(page.locator('aside').getByRole('link', { name: old, exact: true })).toHaveCount(0)

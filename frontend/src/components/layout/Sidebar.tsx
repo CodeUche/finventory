@@ -194,9 +194,6 @@ const GROUP_ICONS: Record<string, React.ElementType> = {
   'HELP DESK': ICON.tickets,
 }
 
-// General Reports sits right after the 6th group (HR) in the designer's menu.
-const REPORTS_AFTER = 7
-
 // True on desktop widths (where the sidebar can fold into an icon rail).
 function useIsDesktop() {
   const [yes, setYes] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width:1024px)').matches)
@@ -328,7 +325,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   const isDesktop = useIsDesktop()
   const railMode = mini && isDesktop
 
-  // One sidebar group (header + its links). Rendered in two runs so General Reports can sit after HR, as in the designer's menu.
+  // One sidebar group (header + its links). 
   const renderGroup = (group: (typeof navGroups)[number], gi: number) => {
       const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
       const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly, item.businessType))
@@ -462,9 +459,20 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
       {/* Nav */}
       <nav className="sh-nav">
-        {navGroups.slice(0, REPORTS_AFTER).map((g, i) => renderGroup(g, i))}
+        {navGroups.map((g, i) => renderGroup(g, i))}
 
-        {/* General Reports: ONE flat link, as in the designer's menu. Every report, and the old
+        {/* Owner-only analytics — hidden in billing-only mode */}
+        {!billingOnly && isOwnerOrAdmin && canSeeItem('owner_analytics') && (
+          <NavLink
+            to="/owner-analytics"
+            className={({ isActive }) => rowClass(isActive)}
+          >
+            <ICON.analytics size={20} className="sh-ico shrink-0" />
+            <span className="sh-label">Owner Analytics</span>
+          </NavLink>
+        )}
+
+        {/* General Reports: ONE flat link, as in the designer's menu, after Owner Analytics and just before Settings. Every report, and the old
             shortcuts (Financial Statements, Balance Sheet, Stock, Sales by Customer / Product),
             are reached from the Reports home it opens. */}
         {!billingOnly && canSeeItem('reports') && (
@@ -475,19 +483,6 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           >
             <ICON.reports size={20} className="sh-ico shrink-0" />
             <span className="sh-label">General Reports</span>
-          </NavLink>
-        )}
-
-        {navGroups.slice(REPORTS_AFTER).map((g, i) => renderGroup(g, i + REPORTS_AFTER))}
-
-        {/* Owner-only analytics — hidden in billing-only mode */}
-        {!billingOnly && isOwnerOrAdmin && canSeeItem('owner_analytics') && (
-          <NavLink
-            to="/owner-analytics"
-            className={({ isActive }) => rowClass(isActive)}
-          >
-            <ICON.analytics size={20} className="sh-ico shrink-0" />
-            <span className="sh-label">Owner Analytics</span>
           </NavLink>
         )}
 

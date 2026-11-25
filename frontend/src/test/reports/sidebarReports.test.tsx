@@ -28,4 +28,16 @@ describe('Sidebar Reports entry', () => {
     // no expand/collapse button for Reports any more
     expect(screen.queryByRole('button', { name: /General Reports/ })).toBeNull()
   })
+
+  it('follows the designer order: ... Tickets, Owner Analytics, General Reports, Settings', () => {
+    useAuthStore.setState({ memberRole: 'owner', modulePermissions: {}, planModules: null, user: { is_superuser: false } as never })
+    const { container } = render(<MemoryRouter initialEntries={['/dashboard']}><Sidebar open onClose={() => {}} /></MemoryRouter>)
+    const labels = Array.from(container.querySelectorAll('nav a, nav button')).map((e) => (e.getAttribute('title') || e.textContent || '').trim())
+    const at = (l: string) => labels.indexOf(l)
+    const order = ['Dashboard', 'Accounting', 'Customers & Receipts', 'Sales & POS', 'Procurement', 'Inventory', 'HR',
+      'Income & Expenses', 'Compliance', 'Billing & Plans', 'Tickets', 'Owner Analytics', 'General Reports', 'Settings']
+    // the whole menu, in the designer's order (partner links sit after Dashboard for partners)
+    expect(order.every((l) => at(l) >= 0)).toBe(true)
+    expect(order.map(at)).toEqual([...order.map(at)].sort((x, y) => x - y))
+  })
 })
