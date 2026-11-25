@@ -131,7 +131,7 @@ test('Reports home shows the question tiles and quick links', async ({ page }) =
     'How am I doing?', 'Who owes me?', 'What do I owe?', 'Where is my cash?',
     'What do I owe the tax office?', 'The books',
   ]) {
-    await expect(page.getByRole('link', { name: new RegExp(q.replace('?', '\?'), 'i') }).first())
+    await expect(page.getByRole('link', { name: new RegExp(q.replace('?', '[?]'), 'i') }).first())
       .toBeVisible({ timeout: 30_000 })
   }
   // The old sub-menu shortcuts are reachable from here.
