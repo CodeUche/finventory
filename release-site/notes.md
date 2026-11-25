@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-Your profit and loss now includes payroll, depreciation and approved supplier bills, so it matches your books. There is one VAT figure across the app, now shown as an estimate worksheet, plus new VAT settings for suppliers and bills. The profit and loss needs access to Accounting. Sales, deposits, voids and returns are recorded more accurately.
+General Reports now opens with simple questions, such as who owes me and where is my cash, with your key figures on top. The menu is tidier, with a smaller sign-out area you can fold away. Messages and notifications are easier to read, and every report is still here.
